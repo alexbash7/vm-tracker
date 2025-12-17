@@ -65,6 +65,42 @@
 
 <script>
 const chartData = {{ chart_data | tojson }};
+const dataDateUTC = "{{ current_date }}";
+
+// Конвертируем UTC часы в локальные
+function convertUTCHoursToLocal(utcHours) {
+    const localHours = [];
+    const tzOffset = new Date().getTimezoneOffset() / -60; // в часах, например +2 для Киева зимой, +3 летом
+    
+    for (let utcHour = 0; utcHour < 24; utcHour++) {
+        let localHour = utcHour + tzOffset;
+        if (localHour >= 24) localHour -= 24;
+        if (localHour < 0) localHour += 24;
+        localHours.push(`${String(localHour).padStart(2, '0')}:00`);
+    }
+    return localHours;
+}
+
+// Переставляем данные согласно локальному времени
+function reorderDataForLocalTime(data, tzOffset) {
+    const shift = tzOffset;
+    if (shift === 0) return data;
+    
+    const result = new Array(24).fill(0);
+    for (let utcHour = 0; utcHour < 24; utcHour++) {
+        let localHour = utcHour + shift;
+        if (localHour >= 24) localHour -= 24;
+        if (localHour < 0) localHour += 24;
+        result[localHour] = data[utcHour];
+    }
+    return result;
+}
+
+const tzOffset = new Date().getTimezoneOffset() / -60;
+const localHourLabels = [];
+for (let h = 0; h < 24; h++) {
+    localHourLabels.push(`${String(h).padStart(2, '0')}:00`);
+}
 
 // Colors for lines
 const colors = {
@@ -80,17 +116,25 @@ const colors = {
 chartData.forEach((machine, index) => {
     const chartIndex = index + 1;
     
+    // Переставляем данные в локальное время
+    const keysLocal = reorderDataForLocalTime(machine.keys, tzOffset);
+    const clicksLocal = reorderDataForLocalTime(machine.clicks, tzOffset);
+    const distanceLocal = reorderDataForLocalTime(machine.distance, tzOffset);
+    const scrollLocal = reorderDataForLocalTime(machine.scroll, tzOffset);
+    const cpuLocal = reorderDataForLocalTime(machine.cpu, tzOffset);
+    const ramLocal = reorderDataForLocalTime(machine.ram, tzOffset);
+    
     // Activity Chart
     const activityCtx = document.getElementById(`activity-${chartIndex}`);
     if (activityCtx) {
         new Chart(activityCtx, {
             type: 'line',
             data: {
-                labels: machine.hours,
+                labels: localHourLabels,
                 datasets: [
                     {
                         label: 'Keys',
-                        data: machine.keys,
+                        data: keysLocal,
                         borderColor: colors.keys,
                         backgroundColor: colors.keys + '20',
                         tension: 0.3,
@@ -98,7 +142,7 @@ chartData.forEach((machine, index) => {
                     },
                     {
                         label: 'Clicks',
-                        data: machine.clicks,
+                        data: clicksLocal,
                         borderColor: colors.clicks,
                         backgroundColor: colors.clicks + '20',
                         tension: 0.3,
@@ -106,7 +150,7 @@ chartData.forEach((machine, index) => {
                     },
                     {
                         label: 'Distance (÷100)',
-                        data: machine.distance.map(v => v / 100),
+                        data: distanceLocal.map(v => v / 100),
                         borderColor: colors.distance,
                         backgroundColor: colors.distance + '20',
                         tension: 0.3,
@@ -114,7 +158,7 @@ chartData.forEach((machine, index) => {
                     },
                     {
                         label: 'Scroll',
-                        data: machine.scroll,
+                        data: scrollLocal,
                         borderColor: colors.scroll,
                         backgroundColor: colors.scroll + '20',
                         tension: 0.3,
@@ -148,15 +192,15 @@ chartData.forEach((machine, index) => {
     
     // Resources Chart
     const resourcesCtx = document.getElementById(`resources-${chartIndex}`);
-    if (resourcesCtx && machine.cpu.some(v => v > 0)) {
+    if (resourcesCtx && cpuLocal.some(v => v > 0)) {
         new Chart(resourcesCtx, {
             type: 'line',
             data: {
-                labels: machine.hours,
+                labels: localHourLabels,
                 datasets: [
                     {
                         label: 'CPU %',
-                        data: machine.cpu,
+                        data: cpuLocal,
                         borderColor: colors.cpu,
                         backgroundColor: colors.cpu + '20',
                         tension: 0.3,
@@ -164,7 +208,7 @@ chartData.forEach((machine, index) => {
                     },
                     {
                         label: 'RAM %',
-                        data: machine.ram,
+                        data: ramLocal,
                         borderColor: colors.ram,
                         backgroundColor: colors.ram + '20',
                         tension: 0.3,
