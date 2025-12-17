@@ -1,0 +1,23 @@
+# Activity Tracker Agent Configuration
+
+# URL API сервера
+server_url: "https://tracker-api.example.com"
+
+# ID машины (автогенерируется если не указан)
+# machine_id: "vm-abc123-user1"
+
+# Метка пользователя (опционально)
+# user_label: "freelancer-john"
+
+# Интервалы в секундах
+collect_interval_sec: 60      # Сбор данных каждую минуту
+send_interval_sec: 300        # Отправка на сервер раз в 5 минут
+
+# Путь к локальному буферу
+buffer_path: "/var/lib/activity-tracker/buffer.db"
+
+# Фичи
+features:
+  screenshots: false
+  screenshots_interval_sec: 600
+  track_system_stats: true    # CPU, RAM, Disk
