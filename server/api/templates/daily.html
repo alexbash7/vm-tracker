@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+
+{% block title %}Daily Activity - {{ current_date }}{% endblock %}
+
+{% block content %}
+<div class="header">
+    <h1>Daily Activity</h1>
+    <div class="controls">
+        <label for="date">Date:</label>
+        <input type="date" id="date" value="{{ current_date }}" onchange="changeDate(this.value)">
+    </div>
+</div>
+
+{% if not data %}
+<div class="no-data">
+    <h3>No data for this date</h3>
+    <p>Select a different date or check if agents are running</p>
+</div>
+{% else %}
+    {% for machine_data in data %}
+    <div class="machine-card">
+        <h3>{{ machine_data.label }}</h3>
+        <div class="machine-id">{{ machine_data.machine_id }}</div>
+        
+        <!-- Activity Chart -->
+        <div class="chart-title">User Activity (by hour)</div>
+        <div class="chart-container">
+            <canvas id="activity-{{ loop.index }}"></canvas>
+        </div>
+        
+        <!-- Resources Chart -->
+        {% if machine_data.has_resources %}
+        <div class="chart-title">System Resources (by hour, avg during activity)</div>
+        <div class="chart-container">
+            <canvas id="resources-{{ loop.index }}"></canvas>
+        </div>
+        {% endif %}
+        
+        <!-- Stats -->
+        <div class="stats-row">
+            <div class="stat">
+                <div class="stat-value">{{ machine_data.total_keys }}</div>
+                <div class="stat-label">Total Keys</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">{{ machine_data.total_clicks }}</div>
+                <div class="stat-label">Total Clicks</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">{{ machine_data.total_scroll }}</div>
+                <div class="stat-label">Total Scroll</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">{{ machine_data.active_hours }}h</div>
+                <div class="stat-label">Active Hours</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">{{ machine_data.active_minutes }}m</div>
+                <div class="stat-label">Active Minutes</div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+{% endif %}
+
+<script>
+const chartData = {{ chart_data | tojson }};
+
+// Colors for lines
+const colors = {
+    keys: '#3498db',
+    clicks: '#2ecc71', 
+    distance: '#e67e22',
+    scroll: '#9b59b6',
+    cpu: '#e74c3c',
+    ram: '#f1c40f'
+};
+
+// Create charts for each machine
+chartData.forEach((machine, index) => {
+    const chartIndex = index + 1;
+    
+    // Activity Chart
+    const activityCtx = document.getElementById(`activity-${chartIndex}`);
+    if (activityCtx) {
+        new Chart(activityCtx, {
+            type: 'line',
+            data: {
+                labels: machine.hours,
+                datasets: [
+                    {
+                        label: 'Keys',
+                        data: machine.keys,
+                        borderColor: colors.keys,
+                        backgroundColor: colors.keys + '20',
+                        tension: 0.3,
+                        fill: false
+                    },
+                    {
+                        label: 'Clicks',
+                        data: machine.clicks,
+                        borderColor: colors.clicks,
+                        backgroundColor: colors.clicks + '20',
+                        tension: 0.3,
+                        fill: false
+                    },
+                    {
+                        label: 'Distance (÷100)',
+                        data: machine.distance.map(v => v / 100),
+                        borderColor: colors.distance,
+                        backgroundColor: colors.distance + '20',
+                        tension: 0.3,
+                        fill: false
+                    },
+                    {
+                        label: 'Scroll',
+                        data: machine.scroll,
+                        borderColor: colors.scroll,
+                        backgroundColor: colors.scroll + '20',
+                        tension: 0.3,
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: { color: '#ccc' }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: '#333' },
+                        ticks: { color: '#888' }
+                    },
+                    y: {
+                        grid: { color: '#333' },
+                        ticks: { color: '#888' },
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+    }
+    
+    // Resources Chart
+    const resourcesCtx = document.getElementById(`resources-${chartIndex}`);
+    if (resourcesCtx && machine.cpu.some(v => v > 0)) {
+        new Chart(resourcesCtx, {
+            type: 'line',
+            data: {
+                labels: machine.hours,
+                datasets: [
+                    {
+                        label: 'CPU %',
+                        data: machine.cpu,
+                        borderColor: colors.cpu,
+                        backgroundColor: colors.cpu + '20',
+                        tension: 0.3,
+                        fill: false
+                    },
+                    {
+                        label: 'RAM %',
+                        data: machine.ram,
+                        borderColor: colors.ram,
+                        backgroundColor: colors.ram + '20',
+                        tension: 0.3,
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: { color: '#ccc' }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: '#333' },
+                        ticks: { color: '#888' }
+                    },
+                    y: {
+                        grid: { color: '#333' },
+                        ticks: { color: '#888' },
+                        beginAtZero: true,
+                        max: 100
+                    }
+                }
+            }
+        });
+    }
+});
+
+function changeDate(date) {
+    const url = new URL(window.location);
+    url.searchParams.set('date', date);
+    window.location = url;
+}
+</script>
+{% endblock %}

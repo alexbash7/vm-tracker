@@ -1,8 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import os
 
 from database import engine, Base
-from routers import ingest, machines, activity
+from routers import ingest, machines, activity, dashboard
 
 # Создаём таблицы
 Base.metadata.create_all(bind=engine)
@@ -26,6 +28,7 @@ app.add_middleware(
 app.include_router(ingest.router)
 app.include_router(machines.router)
 app.include_router(activity.router)
+app.include_router(dashboard.router)
 
 
 @app.get("/")
