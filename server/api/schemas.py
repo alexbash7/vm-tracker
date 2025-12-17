@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
+from uuid import UUID
 
 
 class ActivityEventCreate(BaseModel):
@@ -35,7 +36,7 @@ class EventsBatch(BaseModel):
 
 
 class MachineResponse(BaseModel):
-    id: str
+    id: UUID
     machine_id: str
     machine_type: Optional[str]
     user_label: Optional[str]
