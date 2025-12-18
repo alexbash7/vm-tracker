@@ -157,8 +157,8 @@ chartData.forEach((machine, index) => {
                         fill: false
                     },
                     {
-                        label: 'Scroll',
-                        data: scrollLocal,
+                        label: 'Scroll (÷10)',
+                        data: scrollLocal.map(v => v / 10),
                         borderColor: colors.scroll,
                         backgroundColor: colors.scroll + '20',
                         tension: 0.3,
