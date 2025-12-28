@@ -63,6 +63,15 @@ class TrackerAgent:
         
         return event
     
+    def has_activity(self, event: dict) -> bool:
+        """Проверить, есть ли реальная активность в событии"""
+        return (
+            event["key_count"] > 0 or
+            event["mouse_clicks"] > 0 or
+            event["scroll_count"] > 0 or
+            event["mouse_distance_px"] > 0
+        )
+    
     def try_send_events(self):
         """Попытаться отправить накопленные события"""
         unsent = self.buffer.get_unsent(limit=100)
@@ -105,7 +114,10 @@ class TrackerAgent:
             while self._running:
                 # Собираем событие
                 event = self.collect_event()
-                self.buffer.add(event)
+                
+                # Добавляем в буфер только если есть активность
+                if self.has_activity(event):
+                    self.buffer.add(event)
                 
                 # Проверяем нужно ли отправлять
                 now = time.time()
