@@ -16,9 +16,12 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 templates_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates")
 templates = Jinja2Templates(directory=templates_dir)
 
+# Допустимые интервалы в минутах
+ALLOWED_INTERVALS = [5, 10, 15, 30, 60]
 
-def get_hourly_data(db: Session, machine_id: str, target_date: date):
-    """Получить данные по часам для машины за день"""
+
+def get_interval_data(db: Session, machine_id: str, target_date: date, interval_minutes: int = 60):
+    """Получить данные по интервалам для машины за день"""
     
     machine = db.query(Machine).filter(Machine.machine_id == machine_id).first()
     if not machine:
@@ -36,66 +39,96 @@ def get_hourly_data(db: Session, machine_id: str, target_date: date):
     if not events:
         return None
     
-    # Инициализация по часам
-    hours_data = {h: {
+    # Количество интервалов в сутках
+    intervals_per_day = (24 * 60) // interval_minutes
+    
+    # Инициализация по интервалам
+    intervals_data = {i: {
         'keys': 0, 'clicks': 0, 'distance': 0, 'scroll': 0,
-        'cpu_sum': 0, 'ram_sum': 0, 'cpu_count': 0, 'ram_count': 0
-    } for h in range(24)}
+        'cpu_sum': 0, 'ram_sum': 0, 'cpu_count': 0, 'ram_count': 0,
+        'active_minutes': 0
+    } for i in range(intervals_per_day)}
     
     total_keys = 0
     total_clicks = 0
     total_scroll = 0
+    total_distance = 0
     active_minutes = 0
     
     for event in events:
-        hour = event.timestamp.hour
+        # Вычисляем индекс интервала
+        minutes_from_midnight = event.timestamp.hour * 60 + event.timestamp.minute
+        interval_index = minutes_from_midnight // interval_minutes
         
-        hours_data[hour]['keys'] += event.key_count or 0
-        hours_data[hour]['clicks'] += event.mouse_clicks or 0
-        hours_data[hour]['distance'] += event.mouse_distance_px or 0
-        hours_data[hour]['scroll'] += event.scroll_count or 0
+        if interval_index >= intervals_per_day:
+            interval_index = intervals_per_day - 1
+        
+        intervals_data[interval_index]['keys'] += event.key_count or 0
+        intervals_data[interval_index]['clicks'] += event.mouse_clicks or 0
+        intervals_data[interval_index]['distance'] += event.mouse_distance_px or 0
+        intervals_data[interval_index]['scroll'] += event.scroll_count or 0
         
         total_keys += event.key_count or 0
         total_clicks += event.mouse_clicks or 0
         total_scroll += event.scroll_count or 0
+        total_distance += event.mouse_distance_px or 0
         
-        if not event.is_idle:
+        # Считаем активные минуты (события с какой-либо активностью)
+        has_activity = (event.key_count or 0) > 0 or (event.mouse_clicks or 0) > 0 or (event.scroll_count or 0) > 0 or (event.mouse_distance_px or 0) > 0
+        if has_activity:
             active_minutes += 1
+            intervals_data[interval_index]['active_minutes'] += 1
         
         # CPU/RAM только если была активность
-        has_activity = (event.key_count or 0) > 0 or (event.mouse_clicks or 0) > 0
         if has_activity:
             if event.cpu_percent is not None:
-                hours_data[hour]['cpu_sum'] += event.cpu_percent
-                hours_data[hour]['cpu_count'] += 1
+                intervals_data[interval_index]['cpu_sum'] += event.cpu_percent
+                intervals_data[interval_index]['cpu_count'] += 1
             if event.ram_used_percent is not None:
-                hours_data[hour]['ram_sum'] += event.ram_used_percent
-                hours_data[hour]['ram_count'] += 1
+                intervals_data[interval_index]['ram_sum'] += event.ram_used_percent
+                intervals_data[interval_index]['ram_count'] += 1
     
-    # Формируем данные для графиков
-    hours = [f"{h:02d}:00" for h in range(24)]
-    keys = [hours_data[h]['keys'] for h in range(24)]
-    clicks = [hours_data[h]['clicks'] for h in range(24)]
-    distance = [hours_data[h]['distance'] for h in range(24)]
-    scroll = [hours_data[h]['scroll'] for h in range(24)]
+    # Формируем лейблы для интервалов
+    labels = []
+    for i in range(intervals_per_day):
+        total_minutes = i * interval_minutes
+        hour = total_minutes // 60
+        minute = total_minutes % 60
+        labels.append(f"{hour:02d}:{minute:02d}")
     
-    # CPU/RAM - среднее только за активные минуты, 0 если не было активности
+    keys = [intervals_data[i]['keys'] for i in range(intervals_per_day)]
+    clicks = [intervals_data[i]['clicks'] for i in range(intervals_per_day)]
+    distance = [intervals_data[i]['distance'] for i in range(intervals_per_day)]
+    scroll = [intervals_data[i]['scroll'] for i in range(intervals_per_day)]
+    
+    # CPU/RAM - среднее только за активные минуты
     cpu = []
     ram = []
-    for h in range(24):
-        if hours_data[h]['cpu_count'] > 0:
-            cpu.append(round(hours_data[h]['cpu_sum'] / hours_data[h]['cpu_count'], 1))
+    for i in range(intervals_per_day):
+        if intervals_data[i]['cpu_count'] > 0:
+            cpu.append(round(intervals_data[i]['cpu_sum'] / intervals_data[i]['cpu_count'], 1))
         else:
             cpu.append(0)
-        if hours_data[h]['ram_count'] > 0:
-            ram.append(round(hours_data[h]['ram_sum'] / hours_data[h]['ram_count'], 1))
+        if intervals_data[i]['ram_count'] > 0:
+            ram.append(round(intervals_data[i]['ram_sum'] / intervals_data[i]['ram_count'], 1))
         else:
             ram.append(0)
     
-    # Считаем активные часы (часы где была хоть какая-то активность)
-    active_hours = sum(1 for h in range(24) if hours_data[h]['keys'] > 0 or hours_data[h]['clicks'] > 0)
+    # Считаем активные часы (интервалы где была хоть какая-то активность)
+    active_intervals = sum(1 for i in range(intervals_per_day) if intervals_data[i]['keys'] > 0 or intervals_data[i]['clicks'] > 0)
     
     has_resources = any(c > 0 for c in cpu) or any(r > 0 for r in ram)
+    
+    # Форматируем active time как "Xh Ym"
+    active_hours = active_minutes // 60
+    active_mins_remainder = active_minutes % 60
+    active_time_formatted = f"{active_hours}h {active_mins_remainder}m"
+    
+    # Средние значения per minute (только если есть активные минуты)
+    avg_keys_per_min = round(total_keys / active_minutes, 1) if active_minutes > 0 else 0
+    avg_clicks_per_min = round(total_clicks / active_minutes, 1) if active_minutes > 0 else 0
+    avg_scroll_per_min = round(total_scroll / active_minutes, 1) if active_minutes > 0 else 0
+    avg_distance_per_min = round(total_distance / active_minutes, 1) if active_minutes > 0 else 0
     
     return {
         'machine_id': machine_id,
@@ -103,11 +136,16 @@ def get_hourly_data(db: Session, machine_id: str, target_date: date):
         'total_keys': total_keys,
         'total_clicks': total_clicks,
         'total_scroll': total_scroll,
-        'active_hours': active_hours,
+        'total_distance': total_distance,
         'active_minutes': active_minutes,
+        'active_time_formatted': active_time_formatted,
+        'avg_keys_per_min': avg_keys_per_min,
+        'avg_clicks_per_min': avg_clicks_per_min,
+        'avg_scroll_per_min': avg_scroll_per_min,
+        'avg_distance_per_min': avg_distance_per_min,
         'has_resources': has_resources,
         'chart': {
-            'hours': hours,
+            'labels': labels,
             'keys': keys,
             'clicks': clicks,
             'distance': distance,
@@ -123,9 +161,14 @@ async def daily_dashboard(
     request: Request,
     date: Optional[str] = None,
     machine: str = "all",
+    interval: int = 60,
     db: Session = Depends(get_db)
 ):
     """Страница дневных графиков"""
+    
+    # Валидация интервала
+    if interval not in ALLOWED_INTERVALS:
+        interval = 60
     
     # Дата по умолчанию - сегодня
     if date:
@@ -146,13 +189,13 @@ async def daily_dashboard(
     if machine == "all":
         # Все машины
         for m in all_machines:
-            machine_data = get_hourly_data(db, m.machine_id, target_date)
+            machine_data = get_interval_data(db, m.machine_id, target_date, interval)
             if machine_data:
                 data.append(machine_data)
                 chart_data.append(machine_data['chart'])
     else:
         # Одна машина
-        machine_data = get_hourly_data(db, machine, target_date)
+        machine_data = get_interval_data(db, machine, target_date, interval)
         if machine_data:
             data.append(machine_data)
             chart_data.append(machine_data['chart'])
@@ -161,6 +204,8 @@ async def daily_dashboard(
         "request": request,
         "current_date": target_date.isoformat(),
         "selected_machine": machine,
+        "selected_interval": interval,
+        "allowed_intervals": ALLOWED_INTERVALS,
         "machines": all_machines,
         "data": data,
         "chart_data": chart_data
