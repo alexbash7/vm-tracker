@@ -210,3 +210,170 @@ async def daily_dashboard(
         "data": data,
         "chart_data": chart_data
     })
+
+
+@router.get("/weekly", response_class=HTMLResponse)
+async def weekly_dashboard(
+    request: Request,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    machine: str = "all",
+    db: Session = Depends(get_db)
+):
+    """Страница недельных/периодных данных"""
+    
+    # Определяем диапазон дат
+    today = datetime.utcnow().date()
+    
+    if start and end:
+        try:
+            start_date = datetime.strptime(start, "%Y-%m-%d").date()
+            end_date = datetime.strptime(end, "%Y-%m-%d").date()
+        except:
+            # Fallback на текущую неделю
+            start_date = today - timedelta(days=today.weekday())
+            end_date = start_date + timedelta(days=6)
+    else:
+        # По умолчанию — текущая неделя (Пн-Вс)
+        start_date = today - timedelta(days=today.weekday())
+        end_date = start_date + timedelta(days=6)
+    
+    # Получаем список всех машин для sidebar
+    all_machines = db.query(Machine).order_by(Machine.user_label).all()
+    
+    # Собираем данные по дням для каждой машины
+    data = []
+    
+    machines_to_process = all_machines if machine == "all" else [
+        m for m in all_machines if m.machine_id == machine
+    ]
+    
+    for m in machines_to_process:
+        machine_data = get_period_data(db, m.machine_id, start_date, end_date)
+        if machine_data:
+            data.append(machine_data)
+    
+    # Генерируем список дней для заголовков
+    days = []
+    current = start_date
+    while current <= end_date:
+        days.append({
+            'date': current.isoformat(),
+            'label': current.strftime('%a %d.%m'),  # "Mon 23.12"
+        })
+        current += timedelta(days=1)
+    
+    return templates.TemplateResponse("weekly.html", {
+        "request": request,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "selected_machine": machine,
+        "machines": all_machines,
+        "data": data,
+        "days": days
+    })
+
+
+def get_period_data(db: Session, machine_id: str, start_date: date, end_date: date):
+    """Получить данные по дням для машины за период"""
+    
+    machine = db.query(Machine).filter(Machine.machine_id == machine_id).first()
+    if not machine:
+        return None
+    
+    start = datetime.combine(start_date, datetime.min.time())
+    end = datetime.combine(end_date, datetime.max.time())
+    
+    events = db.query(ActivityEvent).filter(
+        ActivityEvent.machine_id == machine.id,
+        ActivityEvent.timestamp >= start,
+        ActivityEvent.timestamp <= end
+    ).all()
+    
+    if not events:
+        return None
+    
+    # Группируем по дням
+    days_data = {}
+    current = start_date
+    while current <= end_date:
+        days_data[current.isoformat()] = {
+            'total_keys': 0,
+            'total_clicks': 0,
+            'total_scroll': 0,
+            'total_distance': 0,
+            'active_minutes': 0,
+            'cpu_sum': 0,
+            'cpu_count': 0,
+            'ram_sum': 0,
+            'ram_count': 0,
+        }
+        current += timedelta(days=1)
+    
+    for event in events:
+        day_key = event.timestamp.date().isoformat()
+        if day_key not in days_data:
+            continue
+        
+        days_data[day_key]['total_keys'] += event.key_count or 0
+        days_data[day_key]['total_clicks'] += event.mouse_clicks or 0
+        days_data[day_key]['total_scroll'] += event.scroll_count or 0
+        days_data[day_key]['total_distance'] += event.mouse_distance_px or 0
+        
+        # Считаем активные минуты
+        has_activity = (event.key_count or 0) > 0 or (event.mouse_clicks or 0) > 0 or (event.scroll_count or 0) > 0 or (event.mouse_distance_px or 0) > 0
+        if has_activity:
+            days_data[day_key]['active_minutes'] += 1
+            
+            if event.cpu_percent is not None:
+                days_data[day_key]['cpu_sum'] += event.cpu_percent
+                days_data[day_key]['cpu_count'] += 1
+            if event.ram_used_percent is not None:
+                days_data[day_key]['ram_sum'] += event.ram_used_percent
+                days_data[day_key]['ram_count'] += 1
+    
+    # Формируем итоговые данные по дням
+    daily_stats = []
+    current = start_date
+    while current <= end_date:
+        day_key = current.isoformat()
+        d = days_data[day_key]
+        
+        active_mins = d['active_minutes']
+        
+        # Форматируем время
+        hours = active_mins // 60
+        mins = active_mins % 60
+        active_time = f"{hours}h {mins}m"
+        
+        # Средние значения
+        avg_keys = round(d['total_keys'] / active_mins, 1) if active_mins > 0 else 0
+        avg_clicks = round(d['total_clicks'] / active_mins, 1) if active_mins > 0 else 0
+        avg_scroll = round(d['total_scroll'] / active_mins, 1) if active_mins > 0 else 0
+        avg_distance = round(d['total_distance'] / active_mins, 1) if active_mins > 0 else 0
+        avg_cpu = round(d['cpu_sum'] / d['cpu_count'], 1) if d['cpu_count'] > 0 else 0
+        avg_ram = round(d['ram_sum'] / d['ram_count'], 1) if d['ram_count'] > 0 else 0
+        
+        daily_stats.append({
+            'date': day_key,
+            'total_keys': d['total_keys'],
+            'total_clicks': d['total_clicks'],
+            'total_scroll': d['total_scroll'],
+            'total_distance': d['total_distance'],
+            'active_time': active_time,
+            'active_minutes': active_mins,
+            'avg_keys': avg_keys,
+            'avg_clicks': avg_clicks,
+            'avg_scroll': avg_scroll,
+            'avg_distance': avg_distance,
+            'avg_cpu': avg_cpu,
+            'avg_ram': avg_ram,
+        })
+        
+        current += timedelta(days=1)
+    
+    return {
+        'machine_id': machine_id,
+        'label': machine.user_label or machine_id,
+        'daily_stats': daily_stats
+    }
