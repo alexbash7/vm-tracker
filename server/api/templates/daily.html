@@ -32,18 +32,14 @@
         <!-- Activity Chart -->
         <div class="chart-title">User Activity (by {{ selected_interval }} min)</div>
         <div class="chart-scroll-container">
-            <div class="chart-container" id="chart-wrapper-{{ loop.index }}">
-                <canvas id="activity-{{ loop.index }}"></canvas>
-            </div>
+            <canvas id="activity-{{ loop.index }}"></canvas>
         </div>
         
         <!-- Resources Chart -->
         {% if machine_data.has_resources %}
         <div class="chart-title">System Resources (by {{ selected_interval }} min, avg during activity)</div>
         <div class="chart-scroll-container">
-            <div class="chart-container" id="resources-wrapper-{{ loop.index }}">
-                <canvas id="resources-{{ loop.index }}"></canvas>
-            </div>
+            <canvas id="resources-{{ loop.index }}"></canvas>
         </div>
         {% endif %}
         
@@ -105,16 +101,6 @@
 const chartData = {{ chart_data | tojson }};
 const selectedInterval = {{ selected_interval }};
 
-// Количество интервалов
-const intervalsPerDay = (24 * 60) / selectedInterval;
-
-// Ширина графика зависит от количества точек
-function getChartWidth(numPoints) {
-    const minWidthPerPoint = 25;
-    const minWidth = 800;
-    return Math.max(minWidth, numPoints * minWidthPerPoint);
-}
-
 // Конвертируем UTC лейблы в локальные
 function convertLabelsToLocal(labels) {
     const tzOffset = new Date().getTimezoneOffset() / -60;
@@ -123,28 +109,42 @@ function convertLabelsToLocal(labels) {
         let localHour = hours + tzOffset;
         if (localHour >= 24) localHour -= 24;
         if (localHour < 0) localHour += 24;
-        return `${String(localHour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+        return `${String(Math.floor(localHour)).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
     });
 }
 
 // Переставляем данные согласно локальному времени
-function reorderDataForLocalTime(data, tzOffset, intervalMinutes) {
+function reorderDataForLocalTime(data, intervalMinutes) {
+    const tzOffset = new Date().getTimezoneOffset() / -60;
     const intervalsPerHour = 60 / intervalMinutes;
-    const shift = tzOffset * intervalsPerHour;
+    const shift = Math.round(tzOffset * intervalsPerHour);
     
     if (shift === 0) return data;
     
     const result = new Array(data.length).fill(0);
-    for (let i = 0; i < data.length; i++) {
-        let localIndex = i + shift;
+    for (let utcIndex = 0; utcIndex < data.length; utcIndex++) {
+        let localIndex = utcIndex + shift;
         if (localIndex >= data.length) localIndex -= data.length;
         if (localIndex < 0) localIndex += data.length;
-        result[Math.floor(localIndex)] = data[i];
+        result[localIndex] = data[utcIndex];
     }
     return result;
 }
 
-const tzOffset = new Date().getTimezoneOffset() / -60;
+// Генерируем локальные лейблы с 00:00 до 23:xx
+function generateLocalLabels(intervalMinutes) {
+    const labels = [];
+    const intervalsPerDay = (24 * 60) / intervalMinutes;
+    for (let i = 0; i < intervalsPerDay; i++) {
+        const totalMinutes = i * intervalMinutes;
+        const hour = Math.floor(totalMinutes / 60);
+        const minute = totalMinutes % 60;
+        labels.push(`${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`);
+    }
+    return labels;
+}
+
+const localLabels = generateLocalLabels(selectedInterval);
 
 // Colors for lines
 const colors = {
@@ -159,23 +159,14 @@ const colors = {
 // Create charts for each machine
 chartData.forEach((machine, index) => {
     const chartIndex = index + 1;
-    const numPoints = machine.labels.length;
     
-    // Конвертируем в локальное время
-    const localLabels = convertLabelsToLocal(machine.labels);
-    const keysLocal = reorderDataForLocalTime(machine.keys, tzOffset, selectedInterval);
-    const clicksLocal = reorderDataForLocalTime(machine.clicks, tzOffset, selectedInterval);
-    const distanceLocal = reorderDataForLocalTime(machine.distance, tzOffset, selectedInterval);
-    const scrollLocal = reorderDataForLocalTime(machine.scroll, tzOffset, selectedInterval);
-    const cpuLocal = reorderDataForLocalTime(machine.cpu, tzOffset, selectedInterval);
-    const ramLocal = reorderDataForLocalTime(machine.ram, tzOffset, selectedInterval);
-    
-    // Устанавливаем ширину контейнера
-    const chartWidth = getChartWidth(numPoints);
-    const activityWrapper = document.getElementById(`chart-wrapper-${chartIndex}`);
-    if (activityWrapper) {
-        activityWrapper.style.width = `${chartWidth}px`;
-    }
+    // Переставляем данные в локальное время
+    const keysLocal = reorderDataForLocalTime(machine.keys, selectedInterval);
+    const clicksLocal = reorderDataForLocalTime(machine.clicks, selectedInterval);
+    const distanceLocal = reorderDataForLocalTime(machine.distance, selectedInterval);
+    const scrollLocal = reorderDataForLocalTime(machine.scroll, selectedInterval);
+    const cpuLocal = reorderDataForLocalTime(machine.cpu, selectedInterval);
+    const ramLocal = reorderDataForLocalTime(machine.ram, selectedInterval);
     
     // Activity Chart
     const activityCtx = document.getElementById(`activity-${chartIndex}`);
@@ -191,8 +182,7 @@ chartData.forEach((machine, index) => {
                         borderColor: colors.keys,
                         backgroundColor: colors.keys + '20',
                         tension: 0.3,
-                        fill: false,
-                        pointRadius: selectedInterval <= 15 ? 2 : 3
+                        fill: false
                     },
                     {
                         label: 'Clicks',
@@ -200,8 +190,7 @@ chartData.forEach((machine, index) => {
                         borderColor: colors.clicks,
                         backgroundColor: colors.clicks + '20',
                         tension: 0.3,
-                        fill: false,
-                        pointRadius: selectedInterval <= 15 ? 2 : 3
+                        fill: false
                     },
                     {
                         label: 'Distance (÷100)',
@@ -209,8 +198,7 @@ chartData.forEach((machine, index) => {
                         borderColor: colors.distance,
                         backgroundColor: colors.distance + '20',
                         tension: 0.3,
-                        fill: false,
-                        pointRadius: selectedInterval <= 15 ? 2 : 3
+                        fill: false
                     },
                     {
                         label: 'Scroll (÷10)',
@@ -218,13 +206,12 @@ chartData.forEach((machine, index) => {
                         borderColor: colors.scroll,
                         backgroundColor: colors.scroll + '20',
                         tension: 0.3,
-                        fill: false,
-                        pointRadius: selectedInterval <= 15 ? 2 : 3
+                        fill: false
                     }
                 ]
             },
             options: {
-                responsive: false,
+                responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
                     legend: {
@@ -235,11 +222,7 @@ chartData.forEach((machine, index) => {
                 scales: {
                     x: {
                         grid: { color: '#333' },
-                        ticks: { 
-                            color: '#888',
-                            maxRotation: 45,
-                            minRotation: 45
-                        }
+                        ticks: { color: '#888' }
                     },
                     y: {
                         grid: { color: '#333' },
@@ -252,11 +235,6 @@ chartData.forEach((machine, index) => {
     }
     
     // Resources Chart
-    const resourcesWrapper = document.getElementById(`resources-wrapper-${chartIndex}`);
-    if (resourcesWrapper) {
-        resourcesWrapper.style.width = `${chartWidth}px`;
-    }
-    
     const resourcesCtx = document.getElementById(`resources-${chartIndex}`);
     if (resourcesCtx && cpuLocal.some(v => v > 0)) {
         new Chart(resourcesCtx, {
@@ -270,8 +248,7 @@ chartData.forEach((machine, index) => {
                         borderColor: colors.cpu,
                         backgroundColor: colors.cpu + '20',
                         tension: 0.3,
-                        fill: false,
-                        pointRadius: selectedInterval <= 15 ? 2 : 3
+                        fill: false
                     },
                     {
                         label: 'RAM %',
@@ -279,13 +256,12 @@ chartData.forEach((machine, index) => {
                         borderColor: colors.ram,
                         backgroundColor: colors.ram + '20',
                         tension: 0.3,
-                        fill: false,
-                        pointRadius: selectedInterval <= 15 ? 2 : 3
+                        fill: false
                     }
                 ]
             },
             options: {
-                responsive: false,
+                responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
                     legend: {
@@ -296,11 +272,7 @@ chartData.forEach((machine, index) => {
                 scales: {
                     x: {
                         grid: { color: '#333' },
-                        ticks: { 
-                            color: '#888',
-                            maxRotation: 45,
-                            minRotation: 45
-                        }
+                        ticks: { color: '#888' }
                     },
                     y: {
                         grid: { color: '#333' },
