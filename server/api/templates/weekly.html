@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+
+{% block title %}Weekly Activity - {{ start_date }} to {{ end_date }}{% endblock %}
+
+{% block content %}
+<div class="header">
+    <h1>Period Activity</h1>
+    <div class="controls">
+        <label for="preset">Range:</label>
+        <select id="preset" onchange="changePreset(this.value)">
+            <option value="this_week">This Week</option>
+            <option value="last_week">Last Week</option>
+            <option value="last_7">Last 7 Days</option>
+            <option value="last_14">Last 14 Days</option>
+            <option value="last_30">Last 30 Days</option>
+            <option value="custom">Custom Range</option>
+        </select>
+        
+        <label for="start">From:</label>
+        <input type="date" id="start" value="{{ start_date }}" onchange="changeDates()">
+        
+        <label for="end">To:</label>
+        <input type="date" id="end" value="{{ end_date }}" onchange="changeDates()">
+    </div>
+</div>
+
+{% if not data %}
+<div class="no-data">
+    <h3>No data for this period</h3>
+    <p>Select a different date range or check if agents are running</p>
+</div>
+{% else %}
+    {% for machine_data in data %}
+    <div class="machine-card">
+        <h3>{{ machine_data.label }}</h3>
+        <div class="machine-id">{{ machine_data.machine_id }}</div>
+        
+        <!-- Totals Table -->
+        <div class="table-title">Daily Totals</div>
+        <div class="table-scroll-container">
+            <table class="stats-table">
+                <thead>
+                    <tr>
+                        <th>Metric</th>
+                        {% for day in days %}
+                        <th>{{ day.label }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Active Time</td>
+                        {% for stat in machine_data.daily_stats %}
+                        <td>{{ stat.active_time }}</td>
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <td>Total Keys</td>
+                        {% for stat in machine_data.daily_stats %}
+                        <td>{{ stat.total_keys }}</td>
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <td>Total Clicks</td>
+                        {% for stat in machine_data.daily_stats %}
+                        <td>{{ stat.total_clicks }}</td>
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <td>Total Scroll</td>
+                        {% for stat in machine_data.daily_stats %}
+                        <td>{{ stat.total_scroll }}</td>
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <td>Total Distance</td>
+                        {% for stat in machine_data.daily_stats %}
+                        <td>{{ stat.total_distance }}</td>
+                        {% endfor %}
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Averages Table -->
+        <div class="table-title">Average per Minute</div>
+        <div class="table-scroll-container">
+            <table class="stats-table">
+                <thead>
+                    <tr>
+                        <th>Metric</th>
+                        {% for day in days %}
+                        <th>{{ day.label }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Keys/min</td>
+                        {% for stat in machine_data.daily_stats %}
+                        <td>{{ stat.avg_keys }}</td>
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <td>Clicks/min</td>
+                        {% for stat in machine_data.daily_stats %}
+                        <td>{{ stat.avg_clicks }}</td>
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <td>Scroll/min</td>
+                        {% for stat in machine_data.daily_stats %}
+                        <td>{{ stat.avg_scroll }}</td>
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <td>Distance/min</td>
+                        {% for stat in machine_data.daily_stats %}
+                        <td>{{ stat.avg_distance }}</td>
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <td>Avg CPU %</td>
+                        {% for stat in machine_data.daily_stats %}
+                        <td>{{ stat.avg_cpu }}</td>
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <td>Avg RAM %</td>
+                        {% for stat in machine_data.daily_stats %}
+                        <td>{{ stat.avg_ram }}</td>
+                        {% endfor %}
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endfor %}
+{% endif %}
+
+<script>
+const startDate = "{{ start_date }}";
+const endDate = "{{ end_date }}";
+
+// Определяем текущий пресет
+function detectPreset() {
+    const today = new Date();
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    
+    // This week (Mon-Sun)
+    const thisWeekStart = new Date(today);
+    thisWeekStart.setDate(today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1));
+    const thisWeekEnd = new Date(thisWeekStart);
+    thisWeekEnd.setDate(thisWeekStart.getDate() + 6);
+    
+    if (start.toISOString().slice(0,10) === thisWeekStart.toISOString().slice(0,10) &&
+        end.toISOString().slice(0,10) === thisWeekEnd.toISOString().slice(0,10)) {
+        return 'this_week';
+    }
+    
+    // Last week
+    const lastWeekStart = new Date(thisWeekStart);
+    lastWeekStart.setDate(lastWeekStart.getDate() - 7);
+    const lastWeekEnd = new Date(lastWeekStart);
+    lastWeekEnd.setDate(lastWeekStart.getDate() + 6);
+    
+    if (start.toISOString().slice(0,10) === lastWeekStart.toISOString().slice(0,10) &&
+        end.toISOString().slice(0,10) === lastWeekEnd.toISOString().slice(0,10)) {
+        return 'last_week';
+    }
+    
+    // Last 7 days
+    const last7Start = new Date(today);
+    last7Start.setDate(today.getDate() - 6);
+    if (start.toISOString().slice(0,10) === last7Start.toISOString().slice(0,10) &&
+        end.toISOString().slice(0,10) === today.toISOString().slice(0,10)) {
+        return 'last_7';
+    }
+    
+    // Last 14 days
+    const last14Start = new Date(today);
+    last14Start.setDate(today.getDate() - 13);
+    if (start.toISOString().slice(0,10) === last14Start.toISOString().slice(0,10) &&
+        end.toISOString().slice(0,10) === today.toISOString().slice(0,10)) {
+        return 'last_14';
+    }
+    
+    // Last 30 days
+    const last30Start = new Date(today);
+    last30Start.setDate(today.getDate() - 29);
+    if (start.toISOString().slice(0,10) === last30Start.toISOString().slice(0,10) &&
+        end.toISOString().slice(0,10) === today.toISOString().slice(0,10)) {
+        return 'last_30';
+    }
+    
+    return 'custom';
+}
+
+// Устанавливаем текущий пресет в селекте
+document.getElementById('preset').value = detectPreset();
+
+function changePreset(preset) {
+    const today = new Date();
+    let start, end;
+    
+    switch(preset) {
+        case 'this_week':
+            start = new Date(today);
+            start.setDate(today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1));
+            end = new Date(start);
+            end.setDate(start.getDate() + 6);
+            break;
+        case 'last_week':
+            start = new Date(today);
+            start.setDate(today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1) - 7);
+            end = new Date(start);
+            end.setDate(start.getDate() + 6);
+            break;
+        case 'last_7':
+            end = new Date(today);
+            start = new Date(today);
+            start.setDate(today.getDate() - 6);
+            break;
+        case 'last_14':
+            end = new Date(today);
+            start = new Date(today);
+            start.setDate(today.getDate() - 13);
+            break;
+        case 'last_30':
+            end = new Date(today);
+            start = new Date(today);
+            start.setDate(today.getDate() - 29);
+            break;
+        case 'custom':
+            return; // Just enable date pickers
+    }
+    
+    document.getElementById('start').value = start.toISOString().slice(0, 10);
+    document.getElementById('end').value = end.toISOString().slice(0, 10);
+    changeDates();
+}
+
+function changeDates() {
+    const start = document.getElementById('start').value;
+    const end = document.getElementById('end').value;
+    const url = new URL(window.location);
+    url.searchParams.set('start', start);
+    url.searchParams.set('end', end);
+    window.location = url;
+}
+</script>
+{% endblock %}
