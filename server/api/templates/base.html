@@ -191,6 +191,55 @@
         .nav-links a.active {
             border-bottom: 2px solid #e94560;
         }
+
+        /* Horizontal scroll for charts */
+.chart-scroll-container {
+    overflow-x: auto;
+    margin-bottom: 20px;
+}
+
+.chart-container {
+    position: relative;
+    height: 250px;
+    min-width: 800px;
+}
+
+/* Stats container */
+.stats-container {
+    display: flex;
+    gap: 40px;
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #0f3460;
+}
+
+.stats-column {
+    flex: 1;
+}
+
+.stats-column-title {
+    font-size: 14px;
+    color: #888;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+}
+
+.stats-row {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+/* Controls select */
+.controls select {
+    padding: 8px 12px;
+    border: 1px solid #0f3460;
+    border-radius: 5px;
+    background: #16213e;
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+}
     </style>
 </head>
 <body>
