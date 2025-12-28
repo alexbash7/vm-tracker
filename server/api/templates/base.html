@@ -301,12 +301,13 @@
     <aside class="sidebar">
         <h2>📊 Activity Tracker</h2>
         
-        <div class="sidebar-section">
-            <h3>Navigation</h3>
-            <ul class="machine-list">
-                <li><a href="/dashboard/daily?machine=all&date={{ current_date }}" class="{% if selected_machine == 'all' %}active{% endif %}">All Machines</a></li>
-            </ul>
-        </div>
+<div class="sidebar-section">
+    <h3>Navigation</h3>
+    <ul class="machine-list">
+        <li><a href="/dashboard/daily?machine=all" class="{% if '/daily' in request.url.path %}active{% endif %}">Daily View</a></li>
+        <li><a href="/dashboard/weekly?machine=all" class="{% if '/weekly' in request.url.path %}active{% endif %}">Weekly View</a></li>
+    </ul>
+</div>
         
         <div class="sidebar-section">
             <h3>Machines</h3>
