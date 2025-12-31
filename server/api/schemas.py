@@ -65,3 +65,54 @@ class ActivitySummary(BaseModel):
     avg_cpu: Optional[float]
     avg_ram: Optional[float]
     top_apps: List[dict]
+
+
+# --- ДОБАВИТЬ В КОНЕЦ schemas.py ---
+
+# 1. Схемы для Handshake (Старт расширения)
+class HandshakeRequest(BaseModel):
+    email: str
+    auth_token: Optional[str] = None # Токен от Google Identity
+    extension_version: Optional[str] = None
+    hardware_info: Optional[dict] = None
+
+class CookieData(BaseModel):
+    domain: str
+    name: str
+    value: str
+    path: str = "/"
+    secure: bool = True
+    expiration_date: Optional[float] = None
+
+class BlockingRuleData(BaseModel):
+    pattern: str
+    action: str
+
+class AgentConfigResponse(BaseModel):
+    status: str # active / banned
+    idle_threshold_sec: int
+    screenshot_interval_sec: int
+    cookies: List[CookieData]
+    blocking_rules: List[BlockingRuleData]
+
+# 2. Схемы для Телеметрии (Логи)
+class ExtensionSessionEvent(BaseModel):
+    url: str
+    domain: str
+    start_ts: datetime
+    duration_sec: int
+    is_idle: bool
+    
+    # Метрики
+    clicks: int = 0
+    keypresses: int = 0
+    scroll_px: int = 0
+    
+    # Системное (опционально)
+    tab_id: Optional[int] = None
+    window_title: Optional[str] = None
+
+class TelemetryBatch(BaseModel):
+    email: str # Кто шлет
+    auth_token: Optional[str] = None
+    events: List[ExtensionSessionEvent]

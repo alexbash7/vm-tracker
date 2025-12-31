@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 import os
 
 from database import engine, Base
-from routers import ingest, machines, activity, dashboard
+from routers import ingest, machines, activity, dashboard, extension
 
 # Создаём таблицы
 Base.metadata.create_all(bind=engine)
@@ -29,6 +29,7 @@ app.include_router(ingest.router)
 app.include_router(machines.router)
 app.include_router(activity.router)
 app.include_router(dashboard.router)
+app.include_router(extension.router) # <--- Подключили
 
 
 @app.get("/")

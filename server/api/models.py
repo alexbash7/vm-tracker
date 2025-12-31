@@ -42,6 +42,8 @@ class ActivityEvent(Base):
     active_url = Column(Text)
     active_domain = Column(String(255))
     tab_switches_count = Column(Integer)
+
+    duration_seconds = Column(Integer, default=0, nullable=True)
     
     # Системные ресурсы
     cpu_percent = Column(Float)
@@ -66,3 +68,61 @@ class Screenshot(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     machine = relationship("Machine", back_populates="screenshots")
+
+
+# Добавляем в models.py
+
+class ExtensionProfile(Base):
+    """
+    Связывает email Google аккаунта с настройками.
+    Может заменять или дополнять таблицу 'Machine'.
+    """
+    __tablename__ = "extension_profiles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email = Column(String(255), unique=True, nullable=False, index=True) # test@useapps...
+    google_sub_id = Column(String(255)) # Уникальный ID от Google OAuth
+    
+    # Настройки
+    idle_threshold_sec = Column(Integer, default=60)
+    screenshot_interval_sec = Column(Integer, default=300)
+    is_active = Column(Boolean, default=True) # Kill switch
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    cookies = relationship("CookieVault", back_populates="profile")
+    blocking_rules = relationship("BlockingRule", back_populates="profile")
+
+
+class CookieVault(Base):
+    """
+    Хранилище кук, которые нужно инжектировать пользователю
+    """
+    __tablename__ = "cookie_vault"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    profile_id = Column(UUID(as_uuid=True), ForeignKey("extension_profiles.id"), nullable=False)
+    
+    domain = Column(String(255), nullable=False) # .upwork.com
+    name = Column(String(255), nullable=False)   # session_id
+    value = Column(Text, nullable=False)         # само значение
+    path = Column(String(255), default="/")
+    secure = Column(Boolean, default=True)
+    expiration_date = Column(Float, nullable=True) # Timestamp
+
+    profile = relationship("ExtensionProfile", back_populates="cookies")
+
+
+class BlockingRule(Base):
+    """
+    Правила блокировки URL (Regex)
+    """
+    __tablename__ = "blocking_rules"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    profile_id = Column(UUID(as_uuid=True), ForeignKey("extension_profiles.id"), nullable=True) # Null = глобальное правило
+    
+    pattern = Column(String(500), nullable=False) # youtube\.com\/shorts.*
+    action = Column(String(50), default="block")
+    
+    profile = relationship("ExtensionProfile", back_populates="blocking_rules")
