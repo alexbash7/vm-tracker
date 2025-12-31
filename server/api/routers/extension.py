@@ -11,9 +11,6 @@ from database import get_db
 from models import ExtensionProfile, CookieVault, BlockingRule, Machine, ActivityEvent, Screenshot
 from schemas import HandshakeRequest, AgentConfigResponse, TelemetryBatch
 
-from google.oauth2 import id_token
-from google.auth.transport import requests as google_requests
-
 # ============ CONFIG ============
 
 # Google OAuth
@@ -50,31 +47,37 @@ def sanitize_filename(email: str) -> str:
     return re.sub(r'[^a-zA-Z0-9@._-]', '_', email)
 
 
+import requests as http_requests  # Переименовываем чтобы не конфликтовать с google.auth.transport.requests
+
 def verify_google_user(token: str, expected_email: str) -> dict:
     """
-    Проверяет, что токен валиден и принадлежит указанному email.
+    Проверяет Google OAuth Access Token через Google API.
     """
     if not token:
         raise HTTPException(status_code=401, detail="Missing auth token")
 
     try:
-        id_info = id_token.verify_oauth2_token(
-            token,
-            google_requests.Request(),
-            audience=GOOGLE_CLIENT_ID
+        # Валидируем Access Token через Google tokeninfo endpoint
+        response = http_requests.get(
+            f"https://oauth2.googleapis.com/tokeninfo?access_token={token}"
         )
-
-        token_email = id_info.get("email")
-
+        
+        if response.status_code != 200:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        token_info = response.json()
+        token_email = token_info.get("email")
+        
+        if not token_email:
+            raise HTTPException(status_code=401, detail="Token has no email scope")
+        
         if token_email != expected_email:
             raise HTTPException(status_code=403, detail="Token email does not match request email")
 
-        return id_info
+        return token_info
 
-    except ValueError as e:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
-
-
+    except http_requests.RequestException as e:
+        raise HTTPException(status_code=401, detail=f"Token validation failed: {str(e)}")
 # ============ ROUTER ============
 
 router = APIRouter(prefix="/api/extension", tags=["extension"])

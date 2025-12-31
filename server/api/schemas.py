@@ -20,7 +20,7 @@ class ActivityEventCreate(BaseModel):
     # Browser extension specific
     active_url: Optional[str] = None
     active_domain: Optional[str] = None
-    tab_switches_count: Optional[int] = None
+    focus_time_sec: Optional[int] = None
     
     # Системные ресурсы
     cpu_percent: Optional[float] = None
@@ -67,14 +67,15 @@ class ActivitySummary(BaseModel):
     top_apps: List[dict]
 
 
-# --- ДОБАВИТЬ В КОНЕЦ schemas.py ---
+# --- Схемы для Browser Extension ---
 
-# 1. Схемы для Handshake (Старт расширения)
+# 1. Handshake (Старт расширения)
 class HandshakeRequest(BaseModel):
     email: str
-    auth_token: Optional[str] = None # Токен от Google Identity
+    auth_token: Optional[str] = None
     extension_version: Optional[str] = None
     hardware_info: Optional[dict] = None
+
 
 class CookieData(BaseModel):
     domain: str
@@ -84,35 +85,38 @@ class CookieData(BaseModel):
     secure: bool = True
     expiration_date: Optional[float] = None
 
+
 class BlockingRuleData(BaseModel):
     pattern: str
     action: str
 
+
 class AgentConfigResponse(BaseModel):
-    status: str # active / banned
+    status: str  # active / banned
     idle_threshold_sec: int
     screenshot_interval_sec: int
     cookies: List[CookieData]
     blocking_rules: List[BlockingRuleData]
 
-# 2. Схемы для Телеметрии (Логи)
+
+# 2. Телеметрия (Логи)
 class ExtensionSessionEvent(BaseModel):
     url: str
     domain: str
+    window_title: Optional[str] = None
     start_ts: datetime
     duration_sec: int
+    focus_time_sec: int = 0       # Время реального фокуса на странице
     is_idle: bool
     
-    # Метрики
+    # Метрики активности
     clicks: int = 0
     keypresses: int = 0
     scroll_px: int = 0
-    
-    # Системное (опционально)
-    tab_id: Optional[int] = None
-    window_title: Optional[str] = None
+    mouse_px: int = 0             # Дистанция движения мыши
+
 
 class TelemetryBatch(BaseModel):
-    email: str # Кто шлет
+    email: str
     auth_token: Optional[str] = None
     events: List[ExtensionSessionEvent]
