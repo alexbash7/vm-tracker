@@ -180,10 +180,10 @@ async def ingest_telemetry(batch: TelemetryBatch, db: Session = Depends(get_db))
             mouse_clicks=item.clicks,
             key_count=item.keypresses,
             scroll_count=item.scroll_px,
-            is_idle=item.is_idle,
+            mouse_distance_px=item.mouse_px,
+            focus_time_sec=item.focus_time_sec,
             
-            tab_switches_count=getattr(item, 'tab_switches', None),
-
+            is_idle=item.is_idle,
             agent_type="extension"
         )
         db.add(event)

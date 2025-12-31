@@ -3,6 +3,7 @@
 const API_BASE = 'https://vm-tracker-api.picreel.xyz';
 const TELEMETRY_INTERVAL_MIN = 1;
 const OFFLINE_BUFFER_MAX_DAYS = 7;
+const MIN_SESSION_DURATION_SEC = 3; // Минимальная длительность сессии
 
 // ============ STATE ============
 
@@ -12,8 +13,9 @@ let authToken = null;
 let isIdle = false;
 let retryCount = 0;
 
-// Текущие сессии по вкладкам: { tabId: { url, domain, window_title, start_ts, ... } }
-let sessions = {};
+// Текущая активная сессия (только одна)
+let currentSession = null;
+let currentTabId = null;
 
 // Очередь завершённых сессий для отправки
 let closedSessions = [];
@@ -82,12 +84,26 @@ async function init() {
     // 10. Отправляем буферизованные данные (если есть)
     await flushOfflineBuffer();
 
+    // 11. Начинаем трекать текущую активную вкладку
+    await startTrackingActiveTab();
+
     retryCount = 0;
     console.log('[Tracker] Initialization complete');
 
   } catch (error) {
     console.error('[Tracker] Init error:', error);
     scheduleRetry(init);
+  }
+}
+
+async function startTrackingActiveTab() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+      startSession(tab.id, tab.url, tab.title);
+    }
+  } catch (e) {
+    console.error('[Tracker] Failed to get active tab:', e);
   }
 }
 
@@ -98,7 +114,6 @@ async function getAuthToken() {
     chrome.identity.getAuthToken({ interactive: false }, (token) => {
       if (chrome.runtime.lastError) {
         console.error('[Tracker] Auth error:', chrome.runtime.lastError.message);
-        // Пробуем интерактивно
         chrome.identity.getAuthToken({ interactive: true }, (token2) => {
           resolve(token2 || null);
         });
@@ -186,7 +201,6 @@ async function sendTelemetry(events) {
 
 async function sendScreenshot(dataUrl, timestamp) {
   try {
-    // Конвертируем base64 в blob
     const response = await fetch(dataUrl);
     const blob = await response.blob();
 
@@ -242,7 +256,6 @@ async function injectCookies(cookies) {
 
 async function setupBlockingRules(rules) {
   if (!rules || rules.length === 0) {
-    // Очищаем старые правила
     const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
     const existingIds = existingRules.map(r => r.id);
     if (existingIds.length > 0) {
@@ -251,7 +264,6 @@ async function setupBlockingRules(rules) {
     return;
   }
 
-  // Удаляем старые, добавляем новые
   const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
   const existingIds = existingRules.map(r => r.id);
 
@@ -276,10 +288,8 @@ async function setupBlockingRules(rules) {
 // ============ ALARMS & TIMERS ============
 
 function setupAlarms() {
-  // Телеметрия каждую минуту
   chrome.alarms.create('telemetry', { periodInMinutes: TELEMETRY_INTERVAL_MIN });
 
-  // Скриншоты (если включены)
   if (config.screenshot_interval_sec > 0) {
     const screenshotMinutes = config.screenshot_interval_sec / 60;
     chrome.alarms.create('screenshot', { periodInMinutes: screenshotMinutes });
@@ -297,21 +307,27 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 });
 
 async function processTelemetry() {
-  // Закрываем текущие сессии для снапшота
-  const now = Date.now();
   const eventsToSend = [...closedSessions];
+  closedSessions = [];
   
-  // Добавляем снапшоты текущих активных сессий
-  for (const [tabId, session] of Object.entries(sessions)) {
-    if (session.start_ts) {
-      const duration = Math.floor((now - session.start_ts) / 1000);
-      if (duration > 0) {
-        eventsToSend.push(formatSessionEvent(session, now));
-      }
+  // Добавляем снапшот текущей активной сессии
+  if (currentSession && currentSession.start_ts) {
+    const now = Date.now();
+    const duration = Math.floor((now - currentSession.start_ts) / 1000);
+    
+    if (duration >= MIN_SESSION_DURATION_SEC) {
+      eventsToSend.push(formatSessionEvent(currentSession, now));
+      
+      // Сбрасываем счётчики для следующего интервала
+      currentSession.start_ts = now;
+      currentSession.focus_time = 0;
+      currentSession.focus_start = Date.now();
+      currentSession.clicks = 0;
+      currentSession.keypresses = 0;
+      currentSession.scroll_px = 0;
+      currentSession.mouse_px = 0;
     }
   }
-
-  closedSessions = [];
 
   // Добавляем из offline буфера
   const buffered = await getOfflineBuffer();
@@ -326,9 +342,16 @@ async function processTelemetry() {
   }
 }
 
+
 function formatSessionEvent(session, endTime) {
   const duration = Math.floor((endTime - session.start_ts) / 1000);
-  const focusTime = Math.floor(session.focus_time / 1000);
+  
+  // Учитываем текущий focus_start если сессия ещё активна
+  let totalFocusTime = session.focus_time || 0;
+  if (session.focus_start) {
+    totalFocusTime += endTime - session.focus_start;
+  }
+  const focusTimeSec = Math.floor(totalFocusTime / 1000);
 
   return {
     url: session.url,
@@ -336,7 +359,7 @@ function formatSessionEvent(session, endTime) {
     window_title: session.window_title,
     start_ts: new Date(session.start_ts).toISOString(),
     duration_sec: duration,
-    focus_time_sec: Math.min(focusTime, duration),
+    focus_time_sec: Math.min(focusTimeSec, duration),
     is_idle: session.is_idle || false,
     clicks: session.clicks || 0,
     keypresses: session.keypresses || 0,
@@ -353,7 +376,6 @@ async function captureScreenshot() {
   if (!config || config.screenshot_interval_sec === 0) return;
 
   try {
-    // Создаём offscreen document если нужно
     if (!offscreenCreated) {
       await chrome.offscreen.createDocument({
         url: 'offscreen.html',
@@ -363,14 +385,10 @@ async function captureScreenshot() {
       offscreenCreated = true;
     }
 
-    // Получаем активную вкладку
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab) return;
 
-    // Делаем скриншот
     const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 70 });
-    
-    // Отправляем на сервер
     await sendScreenshot(dataUrl, Date.now() / 1000);
 
   } catch (error) {
@@ -382,113 +400,123 @@ async function captureScreenshot() {
 // ============ SESSION MANAGEMENT ============
 
 function startSession(tabId, url, title) {
-  const urlObj = new URL(url);
-  
-  sessions[tabId] = {
-    url: url,
-    domain: urlObj.hostname,
-    window_title: title || urlObj.hostname,
-    start_ts: Date.now(),
-    focus_time: 0,
-    focus_start: document.hasFocus?.() ? Date.now() : null,
-    is_idle: isIdle,
-    clicks: 0,
-    keypresses: 0,
-    scroll_px: 0,
-    mouse_px: 0
-  };
+  // Закрываем текущую сессию если есть
+  if (currentSession) {
+    closeSession('new_session');
+  }
 
-  console.log('[Tracker] Session started:', urlObj.hostname);
+  try {
+    const urlObj = new URL(url);
+    
+    currentTabId = tabId;
+    currentSession = {
+      url: url,
+      domain: urlObj.hostname,
+      window_title: title || urlObj.hostname,
+      start_ts: Date.now(),
+      focus_time: 0,
+      focus_start: Date.now(),
+      is_idle: isIdle,
+      clicks: 0,
+      keypresses: 0,
+      scroll_px: 0,
+      mouse_px: 0
+    };
+
+    console.log('[Tracker] Session started:', urlObj.hostname);
+  } catch (e) {
+    console.error('[Tracker] Invalid URL:', url);
+  }
 }
 
-function closeSession(tabId, reason) {
-  const session = sessions[tabId];
-  if (!session) return;
+function closeSession(reason) {
+  if (!currentSession) return;
 
   // Финализируем focus time
-  if (session.focus_start) {
-    session.focus_time += Date.now() - session.focus_start;
-    session.focus_start = null;
+  if (currentSession.focus_start) {
+    currentSession.focus_time += Date.now() - currentSession.focus_start;
+    currentSession.focus_start = null;
   }
 
-  const event = formatSessionEvent(session, Date.now());
+  const duration = Math.floor((Date.now() - currentSession.start_ts) / 1000);
   
-  // Только сохраняем если была какая-то активность или время
-  if (event.duration_sec > 0) {
+  // Сохраняем только если сессия достаточно длинная
+  if (duration >= MIN_SESSION_DURATION_SEC) {
+    const event = formatSessionEvent(currentSession, Date.now());
     closedSessions.push(event);
-    console.log('[Tracker] Session closed:', session.domain, reason);
+    console.log('[Tracker] Session closed:', currentSession.domain, reason, duration + 's');
+  } else {
+    console.log('[Tracker] Session too short, skipped:', currentSession.domain, duration + 's');
   }
 
-  delete sessions[tabId];
+  currentSession = null;
+  currentTabId = null;
 }
 
 // ============ TAB EVENTS ============
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // Реагируем только на активную вкладку
+  if (tabId !== currentTabId) return;
+  
   if (changeInfo.status === 'complete' && tab.url) {
     // Пропускаем служебные страницы
     if (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+      closeSession('chrome_page');
       return;
     }
 
-    // Если была сессия на другом URL — закрываем
-    if (sessions[tabId] && sessions[tabId].url !== tab.url) {
-      closeSession(tabId, 'url_changed');
-    }
-
-    // Начинаем новую сессию
-    if (!sessions[tabId]) {
+    // URL изменился — новая сессия
+    if (currentSession && currentSession.url !== tab.url) {
       startSession(tabId, tab.url, tab.title);
     }
+  }
+  
+  // Обновляем title если изменился
+  if (changeInfo.title && currentSession) {
+    currentSession.window_title = changeInfo.title;
   }
 });
 
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
-  // Приостанавливаем focus на старых вкладках
-  for (const [tabId, session] of Object.entries(sessions)) {
-    if (parseInt(tabId) !== activeInfo.tabId && session.focus_start) {
-      session.focus_time += Date.now() - session.focus_start;
-      session.focus_start = null;
+  try {
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    
+    // Пропускаем служебные страницы
+    if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+      closeSession('chrome_page');
+      return;
     }
-  }
-
-  // Возобновляем focus на активной вкладке
-  const session = sessions[activeInfo.tabId];
-  if (session && !session.focus_start) {
-    session.focus_start = Date.now();
-  }
-
-  // Если нет сессии — создаём
-  if (!session) {
-    try {
-      const tab = await chrome.tabs.get(activeInfo.tabId);
-      if (tab.url && !tab.url.startsWith('chrome://')) {
-        startSession(activeInfo.tabId, tab.url, tab.title);
-      }
-    } catch (e) {}
+    
+    // Новая активная вкладка — новая сессия
+    startSession(activeInfo.tabId, tab.url, tab.title);
+    
+  } catch (e) {
+    console.error('[Tracker] Tab get error:', e);
   }
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  closeSession(tabId, 'tab_closed');
+  if (tabId === currentTabId) {
+    closeSession('tab_closed');
+  }
 });
 
 // ============ WINDOW FOCUS ============
 
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
+  if (!currentSession) return;
+  
   if (windowId === chrome.windows.WINDOW_ID_NONE) {
-    // Браузер потерял фокус — приостанавливаем все сессии
-    for (const session of Object.values(sessions)) {
-      if (session.focus_start) {
-        session.focus_time += Date.now() - session.focus_start;
-        session.focus_start = null;
-      }
+    // Браузер потерял фокус
+    if (currentSession.focus_start) {
+      currentSession.focus_time += Date.now() - currentSession.focus_start;
+      currentSession.focus_start = null;
     }
   } else {
-    // Браузер получил фокус — возобновляем активную вкладку
-    const [tab] = await chrome.tabs.query({ active: true, windowId });
-    if (tab && sessions[tab.id]) {
-      sessions[tab.id].focus_start = Date.now();
+    // Браузер получил фокус
+    if (!currentSession.focus_start) {
+      currentSession.focus_start = Date.now();
     }
   }
 });
@@ -501,12 +529,16 @@ chrome.idle.onStateChanged.addListener((state) => {
   const wasIdle = isIdle;
   isIdle = (state === 'idle' || state === 'locked');
 
-  if (wasIdle !== isIdle) {
-    // Закрываем текущие сессии и начинаем новые с другим is_idle статусом
-    for (const [tabId, session] of Object.entries(sessions)) {
-      closeSession(tabId, isIdle ? 'went_idle' : 'became_active');
-      startSession(tabId, session.url, session.window_title);
-      sessions[tabId].is_idle = isIdle;
+  if (wasIdle !== isIdle && currentSession) {
+    const url = currentSession.url;
+    const title = currentSession.window_title;
+    const tabId = currentTabId;
+    
+    closeSession(isIdle ? 'went_idle' : 'became_active');
+    
+    if (tabId && url) {
+      startSession(tabId, url, title);
+      currentSession.is_idle = isIdle;
     }
   }
 });
@@ -515,31 +547,29 @@ chrome.idle.onStateChanged.addListener((state) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!sender.tab) return;
-
-  const tabId = sender.tab.id;
-  const session = sessions[tabId];
-
-  if (!session) return;
+  
+  // Обрабатываем только от активной вкладки
+  if (sender.tab.id !== currentTabId || !currentSession) return;
 
   switch (message.type) {
     case 'ACTIVITY':
-      session.clicks += message.data.clicks || 0;
-      session.keypresses += message.data.keypresses || 0;
-      session.scroll_px += message.data.scroll_px || 0;
-      session.mouse_px += message.data.mouse_px || 0;
+      currentSession.clicks += message.data.clicks || 0;
+      currentSession.keypresses += message.data.keypresses || 0;
+      currentSession.scroll_px += message.data.scroll_px || 0;
+      currentSession.mouse_px += message.data.mouse_px || 0;
       break;
 
     case 'VISIBILITY_CHANGE':
-      if (message.data.visible && !session.focus_start) {
-        session.focus_start = Date.now();
-      } else if (!message.data.visible && session.focus_start) {
-        session.focus_time += Date.now() - session.focus_start;
-        session.focus_start = null;
+      if (message.data.visible && !currentSession.focus_start) {
+        currentSession.focus_start = Date.now();
+      } else if (!message.data.visible && currentSession.focus_start) {
+        currentSession.focus_time += Date.now() - currentSession.focus_start;
+        currentSession.focus_start = null;
       }
       break;
 
     case 'PAGE_UNLOAD':
-      closeSession(tabId, 'page_unload');
+      closeSession('page_unload');
       break;
   }
 });
@@ -549,10 +579,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function saveToOfflineBuffer(events) {
   const { offlineBuffer = [] } = await chrome.storage.local.get('offlineBuffer');
   
-  // Добавляем новые события
   offlineBuffer.push(...events);
   
-  // Удаляем старые (старше 7 дней)
   const cutoff = Date.now() - (OFFLINE_BUFFER_MAX_DAYS * 24 * 60 * 60 * 1000);
   const filtered = offlineBuffer.filter(e => new Date(e.start_ts).getTime() > cutoff);
   
