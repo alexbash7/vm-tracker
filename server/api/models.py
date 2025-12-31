@@ -44,6 +44,7 @@ class ActivityEvent(Base):
     tab_switches_count = Column(Integer)
 
     duration_seconds = Column(Integer, default=0, nullable=True)
+    focus_time_sec = Column(Integer, default=0)
     
     # Системные ресурсы
     cpu_percent = Column(Float)
