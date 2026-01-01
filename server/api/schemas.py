@@ -81,6 +81,7 @@ class HandshakeRequest(BaseModel):
 
 
 class CookieData(BaseModel):
+    id: int
     domain: str
     name: str
     value: str
