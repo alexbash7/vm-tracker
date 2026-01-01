@@ -21,6 +21,7 @@ class ActivityEventCreate(BaseModel):
     active_url: Optional[str] = None
     active_domain: Optional[str] = None
     focus_time_sec: Optional[int] = None
+    tab_switches_count: Optional[int] = 0
     
     # Системные ресурсы
     cpu_percent: Optional[float] = None
@@ -77,6 +78,8 @@ class HandshakeRequest(BaseModel):
     hardware_info: Optional[dict] = None
 
 
+
+
 class CookieData(BaseModel):
     domain: str
     name: str
@@ -120,3 +123,5 @@ class TelemetryBatch(BaseModel):
     email: str
     auth_token: Optional[str] = None
     events: List[ExtensionSessionEvent]
+
+

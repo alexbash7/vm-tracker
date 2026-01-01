@@ -110,6 +110,7 @@ class CookieVault(Base):
     path = Column(String(255), default="/")
     secure = Column(Boolean, default=True)
     expiration_date = Column(Float, nullable=True) # Timestamp
+    injected_at = Column(DateTime(timezone=True), nullable=True)
 
     profile = relationship("ExtensionProfile", back_populates="cookies")
 

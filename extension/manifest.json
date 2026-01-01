@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Worker Activity Tracker",
-  "version": "1.0.0",
-  "description": "Secure workspace activity tracking for remote workers",
-
+  "name": "Useapps",
+  "version": "1.0.4",
+  "description": "Useapps extention",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1XEKAxzgZ4Wgcsp+JAaHYavDL9BcZUWyIPsrcAUjXoA94i3H6JJTV7Uqv5WgGwJkcPne13xWa8yt5ZDrchGmck/eNzBMvlc2DbKjuHY8r2Hl6pfPdcDitadONsVIE26lKmk5VhHWQJ56vBcN2Lm2h/ulhAoFD+OkUwQax89qAFzGK2FKJAkNsMubuWK9f92vI8f7iSFPrHsqLVHvU6am6OkIYtiwkIZFlM1qzFA6HASx0MgE6ZSFO6rGFpx827gVz2LjoTWfRqPcdOzuRLk4iEg27SEam1MVsSqmoufFuOUMqMZFzwB0o74AEoU8OCZijwSscLQ65BNE+nTf+yjONQIDAQAB",
   "permissions": [
     "identity",
     "identity.email",
@@ -14,7 +14,8 @@
     "alarms",
     "scripting",
     "offscreen",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess"
   ],
 
   "host_permissions": [
@@ -40,7 +41,7 @@
   },
 
   "oauth2": {
-    "client_id": "126571944175-ptqcjc68vdqoarm0a7ngks0tcsp7doqb.apps.googleusercontent.com",
+    "client_id": "126571944175-ljttvgip890m5u5876j7ocd1qc3ted44.apps.googleusercontent.com",
     "scopes": [
       "https://www.googleapis.com/auth/userinfo.email"
     ]

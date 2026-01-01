@@ -116,8 +116,15 @@ async def handshake(req: HandshakeRequest, db: Session = Depends(get_db)):
             "blocking_rules": []
         }
 
+    # Получаем только неинжектированные куки
+    cookies = db.query(CookieVault).filter(
+        CookieVault.profile_id == profile.id,
+        CookieVault.injected_at.is_(None)
+    ).all()
+
     cookies_list = [
         {
+            "id": c.id,
             "domain": c.domain,
             "name": c.name,
             "value": c.value,
@@ -125,7 +132,7 @@ async def handshake(req: HandshakeRequest, db: Session = Depends(get_db)):
             "secure": c.secure,
             "expiration_date": c.expiration_date
         }
-        for c in profile.cookies
+        for c in cookies
     ]
 
     rules_list = [
@@ -137,10 +144,10 @@ async def handshake(req: HandshakeRequest, db: Session = Depends(get_db)):
         "status": "active",
         "idle_threshold_sec": profile.idle_threshold_sec,
         "screenshot_interval_sec": profile.screenshot_interval_sec,
+        "config_refresh_sec": 300,
         "cookies": cookies_list,
         "blocking_rules": rules_list
     }
-
 
 @router.post("/telemetry")
 async def ingest_telemetry(batch: TelemetryBatch, db: Session = Depends(get_db)):
@@ -275,3 +282,20 @@ async def upload_screenshot(
         "s3_key": s3_key,
         "url": s3_url
     }
+
+
+@router.post("/cookies-injected")
+async def mark_cookies_injected(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    data = await request.json()
+    cookie_ids = data.get("cookie_ids", [])
+    
+    if cookie_ids:
+        db.query(CookieVault).filter(
+            CookieVault.id.in_(cookie_ids)
+        ).update({CookieVault.injected_at: func.now()}, synchronize_session=False)
+        db.commit()
+    
+    return {"status": "ok"}

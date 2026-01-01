@@ -100,7 +100,7 @@ async function startTrackingActiveTab() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
-      startSession(tab.id, tab.url, tab.title);
+      await startSession(tab.id, tab.url, tab.title);
     }
   } catch (e) {
     console.error('[Tracker] Failed to get active tab:', e);
@@ -165,7 +165,14 @@ async function doHandshake() {
 }
 
 async function sendTelemetry(events) {
-  if (events.length === 0) return true;
+  if (!events || events.length === 0) return true;
+  
+  // Проверяем что есть credentials
+  if (!userEmail || !authToken) {
+    console.log('[Tracker] Telemetry delayed - no credentials');
+    await saveToOfflineBuffer(events);
+    return false;
+  }
 
   try {
     const response = await fetch(`${API_BASE}/api/extension/telemetry`, {
@@ -233,7 +240,9 @@ async function sendScreenshot(dataUrl, timestamp) {
 
 async function injectCookies(cookies) {
   if (!cookies || cookies.length === 0) return;
-
+  
+  const injectedIds = [];
+  
   for (const cookie of cookies) {
     try {
       await chrome.cookies.set({
@@ -243,47 +252,118 @@ async function injectCookies(cookies) {
         value: cookie.value,
         path: cookie.path || '/',
         secure: cookie.secure !== false,
-        expirationDate: cookie.expiration_date || (Date.now() / 1000 + 86400 * 365)
+        expirationDate: cookie.expiration_date || undefined
       });
+      
+      injectedIds.push(cookie.id);
       console.log('[Tracker] Cookie injected:', cookie.domain, cookie.name);
-    } catch (error) {
-      console.error('[Tracker] Cookie injection failed:', cookie.name, error);
+    } catch (e) {
+      console.error('[Tracker] Cookie injection failed:', e);
+    }
+  }
+  
+  // Сообщаем серверу что куки инжектированы
+  if (injectedIds.length > 0) {
+    try {
+      await fetch(`${API_BASE}/api/extension/cookies-injected`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: userEmail,
+          cookie_ids: injectedIds
+        })
+      });
+    } catch (e) {
+      console.error('[Tracker] Failed to mark cookies as injected:', e);
     }
   }
 }
 
 // ============ BLOCKING RULES ============
 
+// ============ BLOCKING RULES ============
+
+// ============ BLOCKING RULES ============
+
+let blockPatterns = [];
+let allowPatterns = [];
+
 async function setupBlockingRules(rules) {
   if (!rules || rules.length === 0) {
-    const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
-    const existingIds = existingRules.map(r => r.id);
-    if (existingIds.length > 0) {
-      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: existingIds });
-    }
+    blockPatterns = [];
+    allowPatterns = [];
+    console.log('[Tracker] No blocking rules');
     return;
   }
 
-  const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
-  const existingIds = existingRules.map(r => r.id);
-
-  const newRules = rules.map((rule, index) => ({
-    id: index + 1,
-    priority: 1,
-    action: { type: 'block' },
-    condition: {
-      regexFilter: rule.pattern,
-      resourceTypes: ['main_frame']
-    }
-  }));
-
-  await chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: existingIds,
-    addRules: newRules
-  });
-
-  console.log('[Tracker] Blocking rules applied:', newRules.length);
+  blockPatterns = rules.filter(r => r.action === 'block').map(r => r.pattern);
+  allowPatterns = rules.filter(r => r.action === 'allow').map(r => r.pattern);
+  
+  console.log('[Tracker] Blocking rules applied - block:', blockPatterns.length, 'allow:', allowPatterns.length);
 }
+
+
+function isUrlBlocked(url) {
+  if (!url) return false;
+  
+  // Skip chrome and extension pages
+  if (url.startsWith('chrome://') || url.startsWith('chrome-extension://')) return false;
+  
+  // Если правила не загружены — не блокируем
+  if (!allowPatterns || !blockPatterns) return false;
+  
+  // Extract domain from URL
+  let urlDomain;
+  try {
+    urlDomain = new URL(url).hostname;
+  } catch (e) {
+    return false;
+  }
+  
+  // Check if URL's domain has any allow rules
+  for (const pattern of allowPatterns) {
+    // Clean pattern and extract domain
+    const cleanPattern = pattern.replace(/\\\\/g, '\\').replace(/\\./g, '.');
+    const domainMatch = cleanPattern.match(/([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}/);
+    if (!domainMatch) continue;
+    
+    const patternDomain = domainMatch[0];
+    
+    // If URL is on this domain
+    if (urlDomain.includes(patternDomain) || patternDomain.includes(urlDomain.replace('www.', ''))) {
+      // Check if URL matches allow pattern
+      try {
+        const regex = new RegExp(pattern, 'i');
+        if (regex.test(url)) {
+          console.log('[Tracker] URL allowed by pattern:', pattern);
+          return false; // Allowed
+        }
+      } catch (e) {
+        if (url.includes(cleanPattern)) return false;
+      }
+      
+      // URL is on restricted domain but doesn't match allow pattern — block
+      console.log('[Tracker] URL on restricted domain, not in allow list');
+      return true;
+    }
+  }
+  
+  // Check block list
+  for (const pattern of blockPatterns) {
+    try {
+      const regex = new RegExp(pattern, 'i');
+      if (regex.test(url)) {
+        console.log('[Tracker] URL blocked by pattern:', pattern);
+        return true;
+      }
+    } catch (e) {
+      if (url.includes(pattern)) return true;
+    }
+  }
+  
+  return false;
+}
+
 
 // ============ ALARMS & TIMERS ============
 
@@ -295,7 +375,11 @@ function setupAlarms() {
     chrome.alarms.create('screenshot', { periodInMinutes: screenshotMinutes });
   }
 
-  console.log('[Tracker] Alarms set');
+  // Config refresh
+  const refreshMinutes = (config.config_refresh_sec || 300) / 60;
+  chrome.alarms.create('configRefresh', { periodInMinutes: refreshMinutes });
+
+  console.log('[Tracker] Alarms set - configRefresh:', config.config_refresh_sec || 300, 'sec');
 }
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
@@ -303,10 +387,17 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     await processTelemetry();
   } else if (alarm.name === 'screenshot') {
     await captureScreenshot();
+  } else if (alarm.name === 'configRefresh') {
+    await refreshConfig();
   }
 });
 
 async function processTelemetry() {
+      // Проверяем что инициализация завершена
+  if (!userEmail || !authToken || !config) {
+    console.log('[Tracker] Telemetry skipped - not initialized');
+    return;
+  }
   const eventsToSend = [...closedSessions];
   closedSessions = [];
   
@@ -373,33 +464,36 @@ function formatSessionEvent(session, endTime) {
 let offscreenCreated = false;
 
 async function captureScreenshot() {
-  if (!config || config.screenshot_interval_sec === 0) return;
+  // Проверяем что инициализация завершена
+  if (!userEmail || !authToken || !config || config.screenshot_interval_sec === 0) {
+    return;
+  }
 
   try {
-    if (!offscreenCreated) {
-      await chrome.offscreen.createDocument({
-        url: 'offscreen.html',
-        reasons: ['BLOBS'],
-        justification: 'Screenshot capture'
-      });
-      offscreenCreated = true;
+    // Получаем активную вкладку
+    const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const tab = tabs[0];
+    
+    // Проверяем что есть активная вкладка и она не chrome://
+    if (!tab || !tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+      console.log('[Tracker] Screenshot skipped - no valid active tab');
+      return;
     }
 
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab) return;
-
-    const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 70 });
+    // Делаем скриншот
+    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 70 });
+    
+    // Отправляем на сервер
     await sendScreenshot(dataUrl, Date.now() / 1000);
 
   } catch (error) {
-    console.error('[Tracker] Screenshot capture error:', error);
-    offscreenCreated = false;
+    console.log('[Tracker] Screenshot skipped:', error.message);
   }
 }
 
 // ============ SESSION MANAGEMENT ============
 
-function startSession(tabId, url, title) {
+async function startSession(tabId, url, title) {
   // Закрываем текущую сессию если есть
   if (currentSession) {
     closeSession('new_session');
@@ -408,6 +502,15 @@ function startSession(tabId, url, title) {
   try {
     const urlObj = new URL(url);
     
+    // Проверяем, в фокусе ли окно
+    let isWindowFocused = false;
+    try {
+      const window = await chrome.windows.getCurrent();
+      isWindowFocused = window.focused;
+    } catch (e) {
+      // Если не можем получить — считаем что не в фокусе
+    }
+
     currentTabId = tabId;
     currentSession = {
       url: url,
@@ -415,7 +518,7 @@ function startSession(tabId, url, title) {
       window_title: title || urlObj.hostname,
       start_ts: Date.now(),
       focus_time: 0,
-      focus_start: Date.now(),
+      focus_start: isWindowFocused ? Date.now() : null,
       is_idle: isIdle,
       clicks: 0,
       keypresses: 0,
@@ -423,7 +526,7 @@ function startSession(tabId, url, title) {
       mouse_px: 0
     };
 
-    console.log('[Tracker] Session started:', urlObj.hostname);
+    console.log('[Tracker] Session started:', urlObj.hostname, 'focused:', isWindowFocused);
   } catch (e) {
     console.error('[Tracker] Invalid URL:', url);
   }
@@ -455,25 +558,34 @@ function closeSession(reason) {
 
 // ============ TAB EVENTS ============
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  // Реагируем только на активную вкладку
-  if (tabId !== currentTabId) return;
-  
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status === 'complete' && tab.url) {
-    // Пропускаем служебные страницы
+    // Check blocking rules first
+    if (isUrlBlocked(tab.url)) {
+      console.log('[Tracker] Blocked:', tab.url);
+      chrome.tabs.update(tabId, { url: chrome.runtime.getURL('blocked.html') });
+      return;
+    }
+    
+    // Skip chrome pages
     if (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
-      closeSession('chrome_page');
+      if (tabId === currentTabId) {
+        closeSession('chrome_page');
+      }
       return;
     }
 
-    // URL изменился — новая сессия
-    if (currentSession && currentSession.url !== tab.url) {
-      startSession(tabId, tab.url, tab.title);
+    // Check if this is active tab
+    const tabs = await chrome.tabs.query({active: true});
+    if (tabs[0] && tabs[0].id === tabId) {
+      if (!currentSession || currentSession.url !== tab.url) {
+        await startSession(tabId, tab.url, tab.title);
+      }
     }
   }
   
-  // Обновляем title если изменился
-  if (changeInfo.title && currentSession) {
+  // Update title if changed
+  if (changeInfo.title && currentSession && tabId === currentTabId) {
     currentSession.window_title = changeInfo.title;
   }
 });
@@ -489,7 +601,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
     }
     
     // Новая активная вкладка — новая сессия
-    startSession(activeInfo.tabId, tab.url, tab.title);
+    await startSession(activeInfo.tabId, tab.url, tab.title);
     
   } catch (e) {
     console.error('[Tracker] Tab get error:', e);
@@ -523,7 +635,7 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
 
 // ============ IDLE DETECTION ============
 
-chrome.idle.onStateChanged.addListener((state) => {
+chrome.idle.onStateChanged.addListener(async (state) => {
   console.log('[Tracker] Idle state:', state);
   
   const wasIdle = isIdle;
@@ -537,7 +649,7 @@ chrome.idle.onStateChanged.addListener((state) => {
     closeSession(isIdle ? 'went_idle' : 'became_active');
     
     if (tabId && url) {
-      startSession(tabId, url, title);
+      await startSession(tabId, url, title);
       currentSession.is_idle = isIdle;
     }
   }
@@ -617,4 +729,48 @@ function scheduleRetry(fn) {
   retryCount++;
   console.log(`[Tracker] Retrying in ${delay / 1000}s (attempt ${retryCount})`);
   setTimeout(fn, delay);
+}
+
+
+
+async function refreshConfig() {
+  // Проверяем что инициализация завершена
+  if (!userEmail || !authToken) {
+    console.log('[Tracker] Config refresh skipped - not initialized');
+    return;
+  }
+  
+  console.log('[Tracker] Refreshing config...');
+  
+  try {
+    const newConfig = await doHandshake();
+    
+    if (!newConfig) {
+      console.log('[Tracker] Config refresh failed');
+      return;
+    }
+    
+    if (newConfig.status === 'banned') {
+      console.warn('[Tracker] User banned, stopping');
+      config = newConfig;
+      return;
+    }
+    
+    // Обновляем правила блокировки
+    await setupBlockingRules(newConfig.blocking_rules);
+    
+    // Инжектим новые куки
+    await injectCookies(newConfig.cookies);
+    
+    // Обновляем idle threshold если изменился
+    if (newConfig.idle_threshold_sec !== config.idle_threshold_sec) {
+      chrome.idle.setDetectionInterval(newConfig.idle_threshold_sec);
+    }
+    
+    config = newConfig;
+    console.log('[Tracker] Config refreshed successfully');
+    
+  } catch (error) {
+    console.error('[Tracker] Config refresh error:', error);
+  }
 }
