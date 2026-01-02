@@ -94,13 +94,17 @@ class BlockingRuleData(BaseModel):
     pattern: str
     action: str
 
+class AutofillConfigData(BaseModel):
+    rules: List[dict]
+
 
 class AgentConfigResponse(BaseModel):
-    status: str  # active / banned
+    status: str
     idle_threshold_sec: int
     screenshot_interval_sec: int
     cookies: List[CookieData]
     blocking_rules: List[BlockingRuleData]
+    autofill_config: Optional[dict] = None  # Добавить эту строку
 
 
 # 2. Телеметрия (Логи)

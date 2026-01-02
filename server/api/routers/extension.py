@@ -147,7 +147,8 @@ async def handshake(req: HandshakeRequest, db: Session = Depends(get_db)):
         "screenshot_interval_sec": profile.screenshot_interval_sec,
         "config_refresh_sec": 300,
         "cookies": cookies_list,
-        "blocking_rules": rules_list
+        "blocking_rules": rules_list,
+        "autofill_config": profile.autofill_config
     }
 
 @router.post("/telemetry")

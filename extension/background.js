@@ -92,6 +92,12 @@ async function init() {
 
     await loadUpworkFilter();
 
+    // Сохраняем autofill конфиг
+    if (config.autofill_config) {
+        await chrome.storage.local.set({ autofillConfig: config.autofill_config });
+        console.log('[Tracker] Autofill config saved');
+    }
+
 
   } catch (error) {
     console.error('[Tracker] Init error:', error);
@@ -284,10 +290,6 @@ async function injectCookies(cookies) {
 
 // ============ BLOCKING RULES ============
 
-// ============ BLOCKING RULES ============
-
-// ============ BLOCKING RULES ============
-
 let blockPatterns = [];
 let allowPatterns = [];
 
@@ -306,6 +308,7 @@ async function setupBlockingRules(rules) {
 }
 
 
+// FIX: Переписана логика - сначала проверяем ВСЕ allow паттерны, потом ВСЕ block паттерны
 function isUrlBlocked(url) {
   if (!url) return false;
   
@@ -323,35 +326,25 @@ function isUrlBlocked(url) {
     return false;
   }
   
-  // Check if URL's domain has any allow rules
+  // FIX: Сначала проверяем ВСЕ allow-паттерны
   for (const pattern of allowPatterns) {
-    // Clean pattern and extract domain
-    const cleanPattern = pattern.replace(/\\\\/g, '\\').replace(/\\./g, '.');
-    const domainMatch = cleanPattern.match(/([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}/);
-    if (!domainMatch) continue;
-    
-    const patternDomain = domainMatch[0];
-    
-    // If URL is on this domain
-    if (urlDomain.includes(patternDomain) || patternDomain.includes(urlDomain.replace('www.', ''))) {
-      // Check if URL matches allow pattern
-      try {
-        const regex = new RegExp(pattern, 'i');
-        if (regex.test(url)) {
-          console.log('[Tracker] URL allowed by pattern:', pattern);
-          return false; // Allowed
-        }
-      } catch (e) {
-        if (url.includes(cleanPattern)) return false;
+    try {
+      const regex = new RegExp(pattern, 'i');
+      if (regex.test(url)) {
+        console.log('[Tracker] URL allowed by pattern:', pattern);
+        return false; // Allowed
       }
-      
-      // URL is on restricted domain but doesn't match allow pattern — block
-      console.log('[Tracker] URL on restricted domain, not in allow list');
-      return true;
+    } catch (e) {
+      // fallback на простое сравнение
+      const cleanPattern = pattern.replace(/\\\\/g, '\\').replace(/\\./g, '.');
+      if (url.includes(cleanPattern)) {
+        console.log('[Tracker] URL allowed by pattern (fallback):', pattern);
+        return false;
+      }
     }
   }
   
-  // Check block list
+  // Затем проверяем block-паттерны
   for (const pattern of blockPatterns) {
     try {
       const regex = new RegExp(pattern, 'i');
@@ -360,7 +353,10 @@ function isUrlBlocked(url) {
         return true;
       }
     } catch (e) {
-      if (url.includes(pattern)) return true;
+      if (url.includes(pattern)) {
+        console.log('[Tracker] URL blocked by pattern (fallback):', pattern);
+        return true;
+      }
     }
   }
   
@@ -415,7 +411,8 @@ async function processTelemetry() {
       // Сбрасываем счётчики для следующего интервала
       currentSession.start_ts = now;
       currentSession.focus_time = 0;
-      currentSession.focus_start = Date.now();
+      // FIX: Сохраняем focus_start только если он был установлен (окно в фокусе)
+      currentSession.focus_start = currentSession.focus_start ? Date.now() : null;
       currentSession.clicks = 0;
       currentSession.keypresses = 0;
       currentSession.scroll_px = 0;
@@ -734,9 +731,10 @@ function scheduleRetry(fn) {
   setTimeout(fn, delay);
 }
 
-
+// ============ CONFIG REFRESH ============
 
 async function refreshConfig() {
+  // Проверяем что инициализация завершена
   if (!userEmail || !authToken) {
     console.log('[Tracker] Config refresh skipped - not initialized');
     return;
@@ -758,17 +756,28 @@ async function refreshConfig() {
       return;
     }
     
+    // Обновляем правила блокировки
     await setupBlockingRules(newConfig.blocking_rules);
+    
+    // Инжектим новые куки
     await injectCookies(newConfig.cookies);
     
+    // Обновляем idle threshold если изменился
     if (newConfig.idle_threshold_sec !== config.idle_threshold_sec) {
       chrome.idle.setDetectionInterval(newConfig.idle_threshold_sec);
     }
     
     config = newConfig;
     console.log('[Tracker] Config refreshed successfully');
+
+    // Обновляем Upwork фильтр
     
-    await loadUpworkFilter();
+    
+    // Сохраняем autofill конфиг
+    if (config.autofill_config) {
+        await chrome.storage.local.set({ autofillConfig: config.autofill_config });
+        console.log('[Tracker] Autofill config saved');
+    }
     
   } catch (error) {
     console.error('[Tracker] Config refresh error:', error);
@@ -776,12 +785,13 @@ async function refreshConfig() {
 }
 
 // ============ UPWORK FILTER ============
+
 async function loadUpworkFilter() {
   try {
     const response = await fetch('https://dropshare.s3.eu-central-1.wasabisys.com/upwork-filter.json');
-    const config = await response.json();
-    await chrome.storage.local.set({ upworkFilter: config });
-    console.log('[Tracker] Upwork filter loaded:', config);
+    const filterData = await response.json();  // FIX: переименовано чтобы не shadowing глобальный config
+    await chrome.storage.local.set({ upworkFilter: filterData });
+    console.log('[Tracker] Upwork filter loaded:', filterData);
   } catch (e) {
     console.error('[Tracker] Failed to load upwork filter:', e);
   }

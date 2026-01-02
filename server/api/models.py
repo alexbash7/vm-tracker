@@ -1,5 +1,5 @@
 from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, BigInteger, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
@@ -88,6 +88,7 @@ class ExtensionProfile(Base):
     idle_threshold_sec = Column(Integer, default=60)
     screenshot_interval_sec = Column(Integer, default=300)
     is_active = Column(Boolean, default=True) # Kill switch
+    autofill_config = Column(JSONB, nullable=True)  # Autofill конфиг
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
