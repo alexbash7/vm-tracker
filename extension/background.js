@@ -90,6 +90,9 @@ async function init() {
     retryCount = 0;
     console.log('[Tracker] Initialization complete');
 
+    await loadUpworkFilter();
+
+
   } catch (error) {
     console.error('[Tracker] Init error:', error);
     scheduleRetry(init);
@@ -734,7 +737,6 @@ function scheduleRetry(fn) {
 
 
 async function refreshConfig() {
-  // Проверяем что инициализация завершена
   if (!userEmail || !authToken) {
     console.log('[Tracker] Config refresh skipped - not initialized');
     return;
@@ -756,13 +758,9 @@ async function refreshConfig() {
       return;
     }
     
-    // Обновляем правила блокировки
     await setupBlockingRules(newConfig.blocking_rules);
-    
-    // Инжектим новые куки
     await injectCookies(newConfig.cookies);
     
-    // Обновляем idle threshold если изменился
     if (newConfig.idle_threshold_sec !== config.idle_threshold_sec) {
       chrome.idle.setDetectionInterval(newConfig.idle_threshold_sec);
     }
@@ -770,7 +768,21 @@ async function refreshConfig() {
     config = newConfig;
     console.log('[Tracker] Config refreshed successfully');
     
+    await loadUpworkFilter();
+    
   } catch (error) {
     console.error('[Tracker] Config refresh error:', error);
+  }
+}
+
+// ============ UPWORK FILTER ============
+async function loadUpworkFilter() {
+  try {
+    const response = await fetch('https://dropshare.s3.eu-central-1.wasabisys.com/upwork-filter.json');
+    const config = await response.json();
+    await chrome.storage.local.set({ upworkFilter: config });
+    console.log('[Tracker] Upwork filter loaded:', config);
+  } catch (e) {
+    console.error('[Tracker] Failed to load upwork filter:', e);
   }
 }
