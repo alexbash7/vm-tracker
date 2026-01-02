@@ -6,6 +6,7 @@
     let config = null;
     let filledFields = new Set();
     let hiddenElements = new Set();
+    let lastUrl = window.location.href;
 
     // Загружаем конфиг из storage
     chrome.storage.local.get('autofillConfig', (result) => {
@@ -34,16 +35,27 @@
         return false;
     }
 
-    function findElement(selectors) {
-        for (const selector of selectors) {
-            const el = document.querySelector(selector);
-            if (el) return el;
+function findElement(selectors) {
+    for (const selector of selectors) {
+        const el = document.querySelector(selector);
+        if (el && el.offsetParent !== null && el.offsetHeight > 0) {
+            return el;
         }
-        return null;
     }
+    return null;
+}
 
     function processPage() {
         if (!config || !config.rules) return;
+
+        // Сброс при смене URL
+        const currentUrl = window.location.href;
+        if (currentUrl !== lastUrl) {
+            filledFields.clear();
+            hiddenElements.clear();
+            lastUrl = currentUrl;
+            console.log('[Autofill] URL changed, reset state');
+        }
 
         for (const rule of config.rules) {
             if (!matchesUrl(rule.url_match)) continue;
@@ -56,6 +68,9 @@
                     const fieldKey = field.selectors.join('|');
                     if (filledFields.has(fieldKey)) continue;
 
+                    // Помечаем сразу, до таймаута
+                    filledFields.add(fieldKey);
+
                     const delay = field.delay || 500;
 
                     setTimeout(() => {
@@ -66,7 +81,6 @@
                             input.type = 'password';
                         }
 
-                        filledFields.add(fieldKey);
                         console.log('[Autofill] Filled:', field.selectors[0]);
                     }, delay);
                 }
