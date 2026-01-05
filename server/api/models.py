@@ -129,3 +129,22 @@ class BlockingRule(Base):
     action = Column(String(50), default="block")
     
     profile = relationship("ExtensionProfile", back_populates="blocking_rules")
+
+
+
+
+class ExtensionDiagnostic(Base):
+    """
+    Диагностика расширения для дебага
+    """
+    __tablename__ = "extension_diagnostics"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    email = Column(String(255), index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    extension_version = Column(String(50))
+    browser = Column(JSONB, nullable=True)
+    tests = Column(JSONB, nullable=True)
+    storage = Column(JSONB, nullable=True)
+    alarms = Column(JSONB, nullable=True)
+    debug_log = Column(JSONB, nullable=True)

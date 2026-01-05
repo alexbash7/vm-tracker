@@ -301,3 +301,68 @@ async def mark_cookies_injected(
         db.commit()
     
     return {"status": "ok"}
+
+
+
+
+from pydantic import BaseModel
+from typing import Optional, List, Any
+
+class DiagnosticRequest(BaseModel):
+    email: Optional[str] = None
+    extension_version: Optional[str] = None
+    browser: Optional[dict] = None
+    tests: Optional[dict] = None
+    storage: Optional[dict] = None
+    alarms: Optional[List[str]] = None
+    debug_log: Optional[List[dict]] = None
+
+@router.post("/diagnostic")
+async def save_diagnostic(req: DiagnosticRequest, db: Session = Depends(get_db)):
+    """
+    Сохраняет диагностику расширения.
+    """
+    from models import ExtensionDiagnostic
+    
+    diagnostic = ExtensionDiagnostic(
+        email=req.email,
+        extension_version=req.extension_version,
+        browser=req.browser,
+        tests=req.tests,
+        storage=req.storage,
+        alarms=req.alarms,
+        debug_log=req.debug_log
+    )
+    db.add(diagnostic)
+    db.commit()
+    
+    return {"status": "ok"}
+
+@router.get("/diagnostic")
+async def get_diagnostics(email: Optional[str] = None, db: Session = Depends(get_db)):
+    """
+    Получает диагностику для просмотра.
+    """
+    from models import ExtensionDiagnostic
+    
+    query = db.query(ExtensionDiagnostic).order_by(ExtensionDiagnostic.created_at.desc())
+    
+    if email:
+        query = query.filter(ExtensionDiagnostic.email == email)
+    
+    diagnostics = query.limit(50).all()
+    
+    return [
+        {
+            "id": d.id,
+            "email": d.email,
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+            "extension_version": d.extension_version,
+            "browser": d.browser,
+            "tests": d.tests,
+            "storage": d.storage,
+            "alarms": d.alarms,
+            "debug_log": d.debug_log
+        }
+        for d in diagnostics
+    ]

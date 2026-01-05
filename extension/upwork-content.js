@@ -49,6 +49,36 @@
     }
   }
 
+  function hideDashboardItems() {
+    // Только для дашборда
+    if (!window.location.href.includes('/nx/client/dashboard')) return;
+    
+    document.querySelectorAll('[data-test="jobs-list"] > li').forEach(li => {
+      // Пропускаем уже скрытые и служебные элементы (пагинация)
+      if (li.style.display === 'none') return;
+      if (li.classList.contains('bottom-section')) return;
+      
+      const text = li.textContent || '';
+      
+      // Проверяем titles
+      if (HIDDEN.titles.some(title => text.includes(title))) {
+        li.style.display = 'none';
+        console.log('[Upwork Filter] Dashboard hidden:', text.substring(0, 50));
+        return;
+      }
+      
+      // Проверяем ids (ссылки внутри)
+      const links = li.querySelectorAll('a[href]');
+      for (const link of links) {
+        if (HIDDEN.ids.some(id => link.href.includes(id))) {
+          li.style.display = 'none';
+          console.log('[Upwork Filter] Dashboard hidden by ID');
+          break;
+        }
+      }
+    });
+  }
+
   function handleMessages() {
     if (!window.location.href.includes('/messages/')) return;
 
@@ -88,6 +118,7 @@
     }
 
     hideItems();
+    hideDashboardItems();
     handleMessages();
     
     // Показываем страницу
@@ -97,6 +128,7 @@
     // Следим за изменениями DOM
     new MutationObserver(() => {
       hideItems();
+      hideDashboardItems();
       handleMessages();
     }).observe(document.body, {
       childList: true,

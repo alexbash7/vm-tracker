@@ -1,10 +1,8 @@
 // ============ STATE ============
-
 let clicks = 0;
 let keypresses = 0;
 let scrollPx = 0;
 let mousePx = 0;
-
 let lastMouseX = null;
 let lastMouseY = null;
 
@@ -14,6 +12,11 @@ const MOUSE_THROTTLE_MS = 50;
 
 // Интервал отправки данных в background (5 сек)
 const REPORT_INTERVAL_MS = 5000;
+
+// Проверка что расширение ещё активно
+function isExtensionValid() {
+  return chrome.runtime?.id;
+}
 
 // ============ EVENT LISTENERS ============
 
@@ -54,6 +57,8 @@ document.addEventListener('mousemove', (e) => {
 // ============ VISIBILITY CHANGE ============
 
 document.addEventListener('visibilitychange', () => {
+  if (!isExtensionValid()) return;
+  
   chrome.runtime.sendMessage({
     type: 'VISIBILITY_CHANGE',
     data: { visible: document.visibilityState === 'visible' }
@@ -68,6 +73,8 @@ document.addEventListener('visibilitychange', () => {
 // ============ PAGE UNLOAD ============
 
 window.addEventListener('beforeunload', () => {
+  if (!isExtensionValid()) return;
+  
   sendActivityReport();
   chrome.runtime.sendMessage({ type: 'PAGE_UNLOAD' });
 });
@@ -75,6 +82,8 @@ window.addEventListener('beforeunload', () => {
 // ============ WINDOW FOCUS ============
 
 window.addEventListener('focus', () => {
+  if (!isExtensionValid()) return;
+  
   chrome.runtime.sendMessage({
     type: 'VISIBILITY_CHANGE',
     data: { visible: true }
@@ -82,6 +91,8 @@ window.addEventListener('focus', () => {
 });
 
 window.addEventListener('blur', () => {
+  if (!isExtensionValid()) return;
+  
   chrome.runtime.sendMessage({
     type: 'VISIBILITY_CHANGE',
     data: { visible: false }
@@ -92,6 +103,8 @@ window.addEventListener('blur', () => {
 // ============ PERIODIC REPORTING ============
 
 function sendActivityReport() {
+  if (!isExtensionValid()) return;
+  
   // Отправляем только если есть данные
   if (clicks === 0 && keypresses === 0 && scrollPx === 0 && mousePx === 0) {
     return;
@@ -120,7 +133,11 @@ setInterval(sendActivityReport, REPORT_INTERVAL_MS);
 // ============ INITIAL REPORT ============
 
 // Сообщаем background что страница загрузилась
-chrome.runtime.sendMessage({
-  type: 'VISIBILITY_CHANGE',
-  data: { visible: document.visibilityState === 'visible' }
-});
+if (isExtensionValid()) {
+  chrome.runtime.sendMessage({
+    type: 'VISIBILITY_CHANGE',
+    data: { visible: document.visibilityState === 'visible' }
+  });
+}
+
+console.log('env', process.env.NODE_ENV);

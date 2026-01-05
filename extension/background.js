@@ -3,7 +3,36 @@
 const API_BASE = 'https://vm-tracker-api.picreel.xyz';
 const TELEMETRY_INTERVAL_MIN = 1;
 const OFFLINE_BUFFER_MAX_DAYS = 7;
-const MIN_SESSION_DURATION_SEC = 3; // Минимальная длительность сессии
+const MIN_SESSION_DURATION_SEC = 3;
+
+// ============ LOGGING ============
+const debugLogBuffer = [];
+const DEBUG_LOG_MAX = 100;
+
+const originalLog = console.log;
+const originalError = console.error;
+
+async function saveDebugLog(level, args) {
+  const entry = {
+    ts: Date.now(),
+    level: level,
+    msg: args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')
+  };
+  debugLogBuffer.push(entry);
+  while (debugLogBuffer.length > DEBUG_LOG_MAX) debugLogBuffer.shift();
+}
+
+console.log = (...args) => {
+  const ts = new Date().toLocaleTimeString('en-GB', { hour12: false });
+  originalLog(`[${ts}]`, ...args);
+  saveDebugLog('log', args);
+};
+
+console.error = (...args) => {
+  const ts = new Date().toLocaleTimeString('en-GB', { hour12: false });
+  originalError(`[${ts}]`, ...args);
+  saveDebugLog('error', args);
+};
 
 // ============ STATE ============
 
@@ -31,6 +60,7 @@ chrome.runtime.onStartup.addListener(() => {
   console.log('[Tracker] Browser started');
   init();
 });
+
 
 async function init() {
   try {
@@ -96,7 +126,13 @@ async function init() {
     if (config.autofill_config) {
         await chrome.storage.local.set({ autofillConfig: config.autofill_config });
         console.log('[Tracker] Autofill config saved');
+        // Сохраняем состояние для восстановления после сна service worker
     }
+
+    // Обновляем сохранённое состояние
+    await chrome.storage.local.set({ 
+      trackerState: { userEmail, authToken, config } 
+    });
 
 
   } catch (error) {
@@ -156,10 +192,16 @@ async function doHandshake() {
       })
     });
 
-    if (response.status === 401) {
-      await refreshAuthToken();
-      return null;
-    }
+if (response.status === 401) {
+  await refreshAuthToken();
+  // Обновляем сохранённое состояние с новым токеном
+  if (config) {
+    await chrome.storage.local.set({ 
+      trackerState: { userEmail, authToken, config } 
+    });
+  }
+  return null;
+}
 
     if (!response.ok) {
       console.error('[Tracker] Handshake failed:', response.status);
@@ -194,11 +236,17 @@ async function sendTelemetry(events) {
       })
     });
 
-    if (response.status === 401) {
-      await refreshAuthToken();
-      await saveToOfflineBuffer(events);
-      return false;
-    }
+if (response.status === 401) {
+  await refreshAuthToken();
+  // Обновляем сохранённое состояние с новым токеном
+  if (config) {
+    await chrome.storage.local.set({ 
+      trackerState: { userEmail, authToken, config } 
+    });
+  }
+  await saveToOfflineBuffer(events);
+  return false;
+}
 
     if (!response.ok) {
       await saveToOfflineBuffer(events);
@@ -231,10 +279,20 @@ async function sendScreenshot(dataUrl, timestamp) {
       body: formData
     });
 
-    if (!uploadResponse.ok) {
-      console.error('[Tracker] Screenshot upload failed:', uploadResponse.status);
-      return false;
+  if (uploadResponse.status === 401) {
+    await refreshAuthToken();
+    if (config) {
+      await chrome.storage.local.set({ 
+        trackerState: { userEmail, authToken, config } 
+      });
     }
+    return false;
+  }
+
+  if (!uploadResponse.ok) {
+    console.error('[Tracker] Screenshot upload failed:', uploadResponse.status);
+    return false;
+  }
 
     console.log('[Tracker] Screenshot uploaded');
     return true;
@@ -381,7 +439,27 @@ function setupAlarms() {
   console.log('[Tracker] Alarms set - configRefresh:', config.config_refresh_sec || 300, 'sec');
 }
 
+let isInitializing = false;
+
 chrome.alarms.onAlarm.addListener(async (alarm) => {
+  // Восстанавливаем состояние из storage если переменные пустые
+  if (!config && !isInitializing) {
+    const { trackerState } = await chrome.storage.local.get('trackerState');
+    if (trackerState && trackerState.config) {
+      userEmail = trackerState.userEmail;
+      authToken = trackerState.authToken;
+      config = trackerState.config;
+      console.log('[Tracker] State restored from storage');
+      await startTrackingActiveTab();
+    } else {
+      console.log('[Tracker] No saved state, initializing...');
+      isInitializing = true;
+      await init();
+      isInitializing = false;
+      return;
+    }
+  }
+  
   if (alarm.name === 'telemetry') {
     await processTelemetry();
   } else if (alarm.name === 'screenshot') {
@@ -656,8 +734,50 @@ chrome.idle.onStateChanged.addListener(async (state) => {
 });
 
 // ============ MESSAGES FROM CONTENT SCRIPT ============
-
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Диагностические сообщения (от diagnostic.html)
+  if (message.type === 'DIAGNOSTIC_INFO') {
+    (async () => {
+      const storage = await chrome.storage.local.get(['trackerState', 'upworkFilter', 'autofillConfig', 'offlineBuffer']);
+      const alarms = await chrome.alarms.getAll();
+      
+      sendResponse({
+        email: userEmail,
+        version: chrome.runtime.getManifest().version,
+        storage: {
+          hasTrackerState: !!storage.trackerState,
+          hasUpworkFilter: !!storage.upworkFilter,
+          hasAutofillConfig: !!storage.autofillConfig,
+          offlineBufferSize: storage.offlineBuffer?.length || 0
+        },
+        alarms: alarms.map(a => a.name),
+        debugLog: debugLogBuffer
+      });
+    })();
+    return true; // async response
+  }
+  
+  if (message.type === 'DIAGNOSTIC_HANDSHAKE') {
+    (async () => {
+      try {
+        const startTime = Date.now();
+        const result = await doHandshake();
+        sendResponse({
+          success: !!result,
+          time_ms: Date.now() - startTime,
+          status: result ? 'ok' : 'failed'
+        });
+      } catch (e) {
+        sendResponse({
+          success: false,
+          error: e.message
+        });
+      }
+    })();
+    return true; // async response
+  }
+  
+  // Сообщения от content scripts
   if (!sender.tab) return;
   
   // Обрабатываем только от активной вкладки
@@ -769,6 +889,7 @@ async function refreshConfig() {
     
     config = newConfig;
     console.log('[Tracker] Config refreshed successfully');
+    await loadUpworkFilter();
 
     // Обновляем Upwork фильтр
     
@@ -778,6 +899,13 @@ async function refreshConfig() {
         await chrome.storage.local.set({ autofillConfig: config.autofill_config });
         console.log('[Tracker] Autofill config saved');
     }
+
+    // Сохраняем состояние для восстановления после сна service worker
+    await chrome.storage.local.set({ 
+      trackerState: { userEmail, authToken, config } 
+    });
+    console.log('[Tracker] State saved to storage');
+    await startTrackingActiveTab();
     
   } catch (error) {
     console.error('[Tracker] Config refresh error:', error);
@@ -788,7 +916,9 @@ async function refreshConfig() {
 
 async function loadUpworkFilter() {
   try {
-    const response = await fetch('https://dropshare.s3.eu-central-1.wasabisys.com/upwork-filter.json');
+    const response = await fetch('https://dropshare.s3.eu-central-1.wasabisys.com/upwork-filter.json?t=' + Date.now(), {
+  cache: 'no-store'
+});
     const filterData = await response.json();  // FIX: переименовано чтобы не shadowing глобальный config
     await chrome.storage.local.set({ upworkFilter: filterData });
     console.log('[Tracker] Upwork filter loaded:', filterData);
