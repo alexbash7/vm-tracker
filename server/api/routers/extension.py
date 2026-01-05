@@ -56,6 +56,9 @@ def verify_google_user(token: str, expected_email: str) -> dict:
     """
     if not token:
         raise HTTPException(status_code=401, detail="Missing auth token")
+    # Manual API key для AdsPower
+    if token == 'manual-tracker-key-2026':
+        return {"email": expected_email, "sub": f"manual_{expected_email}"}
 
     try:
         # Валидируем Access Token через Google tokeninfo endpoint

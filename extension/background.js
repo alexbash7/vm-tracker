@@ -9,17 +9,30 @@ const MIN_SESSION_DURATION_SEC = 3;
 const debugLogBuffer = [];
 const DEBUG_LOG_MAX = 100;
 
+// Восстанавливаем лог из storage при старте
+chrome.storage.local.get('debugLog', (result) => {
+  if (result.debugLog && Array.isArray(result.debugLog)) {
+    debugLogBuffer.push(...result.debugLog);
+    while (debugLogBuffer.length > DEBUG_LOG_MAX) debugLogBuffer.shift();
+  }
+});
+
 const originalLog = console.log;
 const originalError = console.error;
 
 async function saveDebugLog(level, args) {
+  const now = new Date();
   const entry = {
-    ts: Date.now(),
+    ts: now.toLocaleTimeString('en-GB', { hour12: false }) + '.' + String(now.getMilliseconds()).padStart(3, '0'),
     level: level,
     msg: args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')
   };
+  
   debugLogBuffer.push(entry);
   while (debugLogBuffer.length > DEBUG_LOG_MAX) debugLogBuffer.shift();
+  
+  // Сохраняем в storage для персистентности
+  await chrome.storage.local.set({ debugLog: debugLogBuffer });
 }
 
 console.log = (...args) => {
@@ -64,15 +77,18 @@ chrome.runtime.onStartup.addListener(() => {
 
 async function init() {
   try {
-    // 1. Получаем email пользователя из Chrome профиля
+// 1. Получаем email пользователя из Chrome профиля или из manual storage
     const userInfo = await chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' });
-    if (!userInfo.email) {
-      console.error('[Tracker] No user email found. Is user signed into Chrome?');
+    const { manualUserEmail } = await chrome.storage.local.get('manualUserEmail');
+    
+    if (!userInfo.email && !manualUserEmail) {
+      console.error('[Tracker] No user email found. Is user signed into Chrome or manualUserEmail set?');
       scheduleRetry(init);
       return;
     }
-    userEmail = userInfo.email;
-    console.log('[Tracker] User:', userEmail);
+    
+    userEmail = userInfo.email || manualUserEmail;
+    console.log('[Tracker] User:', userEmail, userInfo.email ? '(Chrome)' : '(Manual)');
 
     // 2. Получаем OAuth токен
     authToken = await getAuthToken();
@@ -155,6 +171,14 @@ async function startTrackingActiveTab() {
 // ============ AUTH ============
 
 async function getAuthToken() {
+  // Сначала пробуем manual token (для AdsPower)
+  const { manualAuthToken } = await chrome.storage.local.get('manualAuthToken');
+  if (manualAuthToken) {
+    console.log('[Tracker] Using manual auth token');
+    return manualAuthToken;
+  }
+  
+  // Иначе пробуем Chrome OAuth
   return new Promise((resolve) => {
     chrome.identity.getAuthToken({ interactive: false }, (token) => {
       if (chrome.runtime.lastError) {
@@ -736,13 +760,16 @@ chrome.idle.onStateChanged.addListener(async (state) => {
 // ============ MESSAGES FROM CONTENT SCRIPT ============
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Диагностические сообщения (от diagnostic.html)
-  if (message.type === 'DIAGNOSTIC_INFO') {
+if (message.type === 'DIAGNOSTIC_INFO') {
     (async () => {
-      const storage = await chrome.storage.local.get(['trackerState', 'upworkFilter', 'autofillConfig', 'offlineBuffer']);
+      const storage = await chrome.storage.local.get(['trackerState', 'upworkFilter', 'autofillConfig', 'offlineBuffer', 'debugLog']);
       const alarms = await chrome.alarms.getAll();
       
+      // Берём email из переменной или из storage
+      const email = userEmail || storage.trackerState?.userEmail || null;
+      
       sendResponse({
-        email: userEmail,
+        email: email,
         version: chrome.runtime.getManifest().version,
         storage: {
           hasTrackerState: !!storage.trackerState,
@@ -751,10 +778,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           offlineBufferSize: storage.offlineBuffer?.length || 0
         },
         alarms: alarms.map(a => a.name),
-        debugLog: debugLogBuffer
+        debugLog: storage.debugLog || debugLogBuffer
       });
     })();
-    return true; // async response
+    return true;
   }
   
   if (message.type === 'DIAGNOSTIC_HANDSHAKE') {
