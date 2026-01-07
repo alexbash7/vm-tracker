@@ -3,7 +3,7 @@
 const API_BASE = 'https://vm-tracker-api.picreel.xyz';
 const TELEMETRY_INTERVAL_MIN = 1;
 const OFFLINE_BUFFER_MAX_DAYS = 7;
-const MIN_SESSION_DURATION_SEC = 3;
+const MIN_SESSION_DURATION_SEC = 1;
 
 // ============ LOGGING ============
 const debugLogBuffer = [];
@@ -194,6 +194,14 @@ async function getAuthToken() {
 }
 
 async function refreshAuthToken() {
+  // Для manual токена просто возвращаем его же
+  const { manualAuthToken } = await chrome.storage.local.get('manualAuthToken');
+  if (manualAuthToken) {
+    authToken = manualAuthToken;
+    return authToken;
+  }
+  
+  // Для OAuth токена — обновляем через Chrome
   return new Promise((resolve) => {
     chrome.identity.removeCachedAuthToken({ token: authToken }, async () => {
       authToken = await getAuthToken();
