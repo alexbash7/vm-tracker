@@ -1,8 +1,7 @@
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
 from uuid import UUID
-
 
 class ActivityEventCreate(BaseModel):
     machine_id: str
@@ -31,10 +30,8 @@ class ActivityEventCreate(BaseModel):
     # Мета
     agent_type: str = "desktop"
 
-
 class EventsBatch(BaseModel):
     events: List[ActivityEventCreate]
-
 
 class MachineResponse(BaseModel):
     id: UUID
@@ -48,12 +45,10 @@ class MachineResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
 class MachineUpdate(BaseModel):
     user_label: Optional[str] = None
     machine_type: Optional[str] = None
     is_active: Optional[bool] = None
-
 
 class ActivitySummary(BaseModel):
     machine_id: str
@@ -67,7 +62,6 @@ class ActivitySummary(BaseModel):
     avg_ram: Optional[float]
     top_apps: List[dict]
 
-
 # --- Схемы для Browser Extension ---
 
 # 1. Handshake (Старт расширения)
@@ -76,9 +70,6 @@ class HandshakeRequest(BaseModel):
     auth_token: Optional[str] = None
     extension_version: Optional[str] = None
     hardware_info: Optional[dict] = None
-
-
-
 
 class CookieData(BaseModel):
     id: int
@@ -89,7 +80,6 @@ class CookieData(BaseModel):
     secure: bool = True
     expiration_date: Optional[float] = None
 
-
 class BlockingRuleData(BaseModel):
     pattern: str
     action: str
@@ -97,36 +87,43 @@ class BlockingRuleData(BaseModel):
 class AutofillConfigData(BaseModel):
     rules: List[dict]
 
-
 class AgentConfigResponse(BaseModel):
     status: str
     idle_threshold_sec: int
     screenshot_interval_sec: int
     cookies: List[CookieData]
     blocking_rules: List[BlockingRuleData]
-    autofill_config: Optional[dict] = None  # Добавить эту строку
-
+    autofill_config: Optional[dict] = None
 
 # 2. Телеметрия (Логи)
+class ClipboardItem(BaseModel):
+    action: str  # 'copy' or 'paste'
+    text: str
+
 class ExtensionSessionEvent(BaseModel):
     url: str
     domain: str
     window_title: Optional[str] = None
     start_ts: datetime
     duration_sec: int
-    focus_time_sec: int = 0       # Время реального фокуса на странице
+    focus_time_sec: int = 0
     is_idle: bool
     
     # Метрики активности
     clicks: int = 0
     keypresses: int = 0
     scroll_px: int = 0
-    mouse_px: int = 0             # Дистанция движения мыши
-
+    mouse_px: int = 0
+    
+    # NEW fields
+    copy_count: int = 0
+    paste_count: int = 0
+    keys_array: Optional[List[str]] = None
+    clipboard_history: Optional[List[ClipboardItem]] = None
+    mouse_avg_speed: Optional[float] = None
+    extension_version: Optional[str] = None
 
 class TelemetryBatch(BaseModel):
     email: str
     auth_token: Optional[str] = None
     events: List[ExtensionSessionEvent]
-
-

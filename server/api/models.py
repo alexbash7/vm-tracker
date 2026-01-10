@@ -46,6 +46,13 @@ class ActivityEvent(Base):
     duration_seconds = Column(Integer, default=0, nullable=True)
     focus_time_sec = Column(Integer, default=0)
     
+    # NEW fields
+    copy_count = Column(Integer, default=0)
+    paste_count = Column(Integer, default=0)
+    keys_array = Column(JSONB, nullable=True)
+    mouse_avg_speed = Column(Float, nullable=True)
+    extension_version = Column(String(20), nullable=True)
+    
     # Системные ресурсы
     cpu_percent = Column(Float)
     ram_used_percent = Column(Float)
@@ -56,6 +63,7 @@ class ActivityEvent(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     machine = relationship("Machine", back_populates="events")
+    clipboard_events = relationship("ClipboardEvent", back_populates="activity_event")
 
 
 class Screenshot(Base):
@@ -148,3 +156,18 @@ class ExtensionDiagnostic(Base):
     storage = Column(JSONB, nullable=True)
     alarms = Column(JSONB, nullable=True)
     debug_log = Column(JSONB, nullable=True)
+
+
+class ClipboardEvent(Base):
+    """
+    История копирования/вставки
+    """
+    __tablename__ = "clipboard_events"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    activity_event_id = Column(BigInteger, ForeignKey("activity_events.id", ondelete="CASCADE"), nullable=False, index=True)
+    action = Column(String(10), nullable=False)  # 'copy' or 'paste'
+    content = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    activity_event = relationship("ActivityEvent", back_populates="clipboard_events")

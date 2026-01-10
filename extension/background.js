@@ -77,25 +77,38 @@ chrome.runtime.onStartup.addListener(() => {
 
 async function init() {
   try {
-// 1. Получаем email пользователя из Chrome профиля или из manual storage
-    const userInfo = await chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' });
-    const { manualUserEmail } = await chrome.storage.local.get('manualUserEmail');
+    // 0. Сначала пробуем получить email из User-Agent (для AdsPower)
+    const uaEmail = await getEmailFromUserAgent();
     
-    if (!userInfo.email && !manualUserEmail) {
-      console.error('[Tracker] No user email found. Is user signed into Chrome or manualUserEmail set?');
-      scheduleRetry(init);
-      return;
-    }
-    
-    userEmail = userInfo.email || manualUserEmail;
-    console.log('[Tracker] User:', userEmail, userInfo.email ? '(Chrome)' : '(Manual)');
+    if (uaEmail) {
+      userEmail = uaEmail;
+      authToken = 'manual-tracker-key-2026';
+      await chrome.storage.local.set({ 
+        manualUserEmail: uaEmail, 
+        manualAuthToken: authToken 
+      });
+      console.log('[Tracker] User from UA mapping:', userEmail);
+    } else {
+      // 1. Получаем email пользователя из Chrome профиля или из manual storage
+      const userInfo = await chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' });
+      const { manualUserEmail } = await chrome.storage.local.get('manualUserEmail');
+      
+      if (!userInfo.email && !manualUserEmail) {
+        console.error('[Tracker] No user email found. Is user signed into Chrome or manualUserEmail set?');
+        scheduleRetry(init);
+        return;
+      }
+      
+      userEmail = userInfo.email || manualUserEmail;
+      console.log('[Tracker] User:', userEmail, userInfo.email ? '(Chrome)' : '(Manual)');
 
-    // 2. Получаем OAuth токен
-    authToken = await getAuthToken();
-    if (!authToken) {
-      console.error('[Tracker] Failed to get auth token');
-      scheduleRetry(init);
-      return;
+      // 2. Получаем OAuth токен
+      authToken = await getAuthToken();
+      if (!authToken) {
+        console.error('[Tracker] Failed to get auth token');
+        scheduleRetry(init);
+        return;
+      }
     }
 
     // 3. Делаем handshake с сервером
@@ -142,14 +155,12 @@ async function init() {
     if (config.autofill_config) {
         await chrome.storage.local.set({ autofillConfig: config.autofill_config });
         console.log('[Tracker] Autofill config saved');
-        // Сохраняем состояние для восстановления после сна service worker
     }
 
     // Обновляем сохранённое состояние
     await chrome.storage.local.set({ 
       trackerState: { userEmail, authToken, config } 
     });
-
 
   } catch (error) {
     console.error('[Tracker] Init error:', error);
@@ -208,6 +219,24 @@ async function refreshAuthToken() {
       resolve(authToken);
     });
   });
+}
+
+async function getEmailFromUserAgent() {
+  const ua = navigator.userAgent;
+  const match = ua.match(/Chrome\/[\d.]+\.(\d{5,})/);
+  if (!match) return null;
+  
+  const trackerId = match[1];
+  console.log('[Tracker] Found tracker ID in UA:', trackerId);
+  
+  try {
+    const response = await fetch('https://dropshare.s3.eu-central-1.wasabisys.com/mapping.json');
+    const mapping = await response.json();
+    return mapping[trackerId] || null;
+  } catch (e) {
+    console.error('[Tracker] Failed to fetch mapping:', e);
+    return null;
+  }
 }
 
 // ============ API CALLS ============
@@ -501,8 +530,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   }
 });
 
+
 async function processTelemetry() {
-      // Проверяем что инициализация завершена
+  // Проверяем что инициализация завершена
   if (!userEmail || !authToken || !config) {
     console.log('[Tracker] Telemetry skipped - not initialized');
     return;
@@ -527,6 +557,13 @@ async function processTelemetry() {
       currentSession.keypresses = 0;
       currentSession.scroll_px = 0;
       currentSession.mouse_px = 0;
+      // NEW: Сбрасываем новые поля
+      currentSession.copy_count = 0;
+      currentSession.paste_count = 0;
+      currentSession.keys_array = [];
+      currentSession.clipboard_history = [];
+      currentSession.mouse_avg_speed = 0;
+      currentSession.mouse_speed_count = 0;
     }
   }
 
@@ -554,6 +591,11 @@ function formatSessionEvent(session, endTime) {
   }
   const focusTimeSec = Math.floor(totalFocusTime / 1000);
 
+  // NEW: Средняя скорость мыши
+  const avgMouseSpeed = session.mouse_speed_count > 0 
+    ? session.mouse_avg_speed / session.mouse_speed_count 
+    : null;
+
   return {
     url: session.url,
     domain: session.domain,
@@ -565,7 +607,14 @@ function formatSessionEvent(session, endTime) {
     clicks: session.clicks || 0,
     keypresses: session.keypresses || 0,
     scroll_px: session.scroll_px || 0,
-    mouse_px: Math.round(session.mouse_px || 0)
+    mouse_px: Math.round(session.mouse_px || 0),
+    // NEW fields
+    copy_count: session.copy_count || 0,
+    paste_count: session.paste_count || 0,
+    keys_array: session.keys_array && session.keys_array.length > 0 ? session.keys_array : null,
+    clipboard_history: session.clipboard_history && session.clipboard_history.length > 0 ? session.clipboard_history : null,
+    mouse_avg_speed: avgMouseSpeed ? Math.round(avgMouseSpeed * 1000) / 1000 : null,
+    extension_version: chrome.runtime.getManifest().version
   };
 }
 
@@ -633,7 +682,14 @@ async function startSession(tabId, url, title) {
       clicks: 0,
       keypresses: 0,
       scroll_px: 0,
-      mouse_px: 0
+      mouse_px: 0,
+      // NEW fields
+      copy_count: 0,
+      paste_count: 0,
+      keys_array: [],
+      clipboard_history: [],
+      mouse_avg_speed: 0,
+      mouse_speed_count: 0
     };
 
     console.log('[Tracker] Session started:', urlObj.hostname, 'focused:', isWindowFocused);
@@ -768,7 +824,7 @@ chrome.idle.onStateChanged.addListener(async (state) => {
 // ============ MESSAGES FROM CONTENT SCRIPT ============
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Диагностические сообщения (от diagnostic.html)
-if (message.type === 'DIAGNOSTIC_INFO') {
+  if (message.type === 'DIAGNOSTIC_INFO') {
     (async () => {
       const storage = await chrome.storage.local.get(['trackerState', 'upworkFilter', 'autofillConfig', 'offlineBuffer', 'debugLog']);
       const alarms = await chrome.alarms.getAll();
@@ -809,7 +865,37 @@ if (message.type === 'DIAGNOSTIC_INFO') {
         });
       }
     })();
-    return true; // async response
+    return true;
+  }
+  
+  if (message.type === 'PROFILE_SETUP') {
+    (async () => {
+      const profileId = message.profileId;
+      console.log('[Tracker] Profile setup from URL:', profileId);
+      
+      try {
+        const response = await fetch('https://dropshare.s3.eu-central-1.wasabisys.com/mapping.json');
+        const mapping = await response.json();
+        const email = mapping[profileId];
+        
+        if (email) {
+          await chrome.storage.local.set({ 
+            manualUserEmail: email, 
+            manualAuthToken: 'manual-tracker-key-2026' 
+          });
+          console.log('[Tracker] Profile configured:', email);
+          
+          userEmail = email;
+          authToken = 'manual-tracker-key-2026';
+          init();
+        } else {
+          console.error('[Tracker] Profile ID not found in mapping:', profileId);
+        }
+      } catch (e) {
+        console.error('[Tracker] Profile setup failed:', e);
+      }
+    })();
+    return;
   }
   
   // Сообщения от content scripts
@@ -818,12 +904,33 @@ if (message.type === 'DIAGNOSTIC_INFO') {
   // Обрабатываем только от активной вкладки
   if (sender.tab.id !== currentTabId || !currentSession) return;
 
-  switch (message.type) {
+switch (message.type) {
     case 'ACTIVITY':
       currentSession.clicks += message.data.clicks || 0;
       currentSession.keypresses += message.data.keypresses || 0;
       currentSession.scroll_px += message.data.scroll_px || 0;
       currentSession.mouse_px += message.data.mouse_px || 0;
+      // NEW fields
+      currentSession.copy_count += message.data.copy_count || 0;
+      currentSession.paste_count += message.data.paste_count || 0;
+      if (message.data.keys_array) {
+        currentSession.keys_array.push(...message.data.keys_array);
+        // Лимит 1000 клавиш на сессию
+        if (currentSession.keys_array.length > 1000) {
+          currentSession.keys_array = currentSession.keys_array.slice(-1000);
+        }
+      }
+      if (message.data.clipboard_history) {
+        currentSession.clipboard_history.push(...message.data.clipboard_history);
+        // Лимит 50 записей на сессию
+        if (currentSession.clipboard_history.length > 50) {
+          currentSession.clipboard_history = currentSession.clipboard_history.slice(-50);
+        }
+      }
+      if (message.data.mouse_avg_speed) {
+        currentSession.mouse_avg_speed += message.data.mouse_avg_speed;
+        currentSession.mouse_speed_count += 1;
+      }
       break;
 
     case 'VISIBILITY_CHANGE':
@@ -839,6 +946,7 @@ if (message.type === 'DIAGNOSTIC_INFO') {
       closeSession('page_unload');
       break;
   }
+
 });
 
 // ============ OFFLINE BUFFER ============
