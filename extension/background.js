@@ -74,7 +74,6 @@ chrome.runtime.onStartup.addListener(() => {
   init();
 });
 
-
 async function init() {
   try {
     // 0. Сначала пробуем получить email из User-Agent (для AdsPower)
@@ -85,65 +84,76 @@ async function init() {
       authToken = 'manual-tracker-key-2026';
       await chrome.storage.local.set({ 
         manualUserEmail: uaEmail, 
-        manualAuthToken: authToken 
+        manualAuthToken: authToken,
+        accountType: 'manual'
       });
       console.log('[Tracker] User from UA mapping:', userEmail);
     } else {
-      // 1. Получаем email пользователя из Chrome профиля или из manual storage
-      const userInfo = await chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' });
-      const { manualUserEmail } = await chrome.storage.local.get('manualUserEmail');
+      // 1. Сначала проверяем manual storage (для AdsPower без UA)
+      const { manualUserEmail, manualAuthToken } = await chrome.storage.local.get(['manualUserEmail', 'manualAuthToken']);
       
-      if (!userInfo.email && !manualUserEmail) {
-        console.error('[Tracker] No user email found. Is user signed into Chrome or manualUserEmail set?');
-        scheduleRetry(init);
-        return;
-      }
-      
-      userEmail = userInfo.email || manualUserEmail;
-      console.log('[Tracker] User:', userEmail, userInfo.email ? '(Chrome)' : '(Manual)');
-
-      // 2. Получаем OAuth токен
-      authToken = await getAuthToken();
-      if (!authToken) {
-        console.error('[Tracker] Failed to get auth token');
-        scheduleRetry(init);
-        return;
+      if (manualUserEmail && manualAuthToken) {
+        userEmail = manualUserEmail;
+        authToken = manualAuthToken;
+        await chrome.storage.local.set({ accountType: 'manual' });
+        console.log('[Tracker] User:', userEmail, '(Manual)');
+      } else {
+        // 2. Пробуем Chrome identity
+        const userInfo = await chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' });
+        
+        if (!userInfo.email) {
+          console.error('[Tracker] No user email found. Is user signed into Chrome or manualUserEmail set?');
+          scheduleRetry(init);
+          return;
+        }
+        
+        userEmail = userInfo.email;
+        await chrome.storage.local.set({ accountType: 'chrome' });
+        console.log('[Tracker] User:', userEmail, '(Chrome)');
+        
+        // 3. Получаем OAuth токен
+        authToken = await getAuthToken();
+        if (!authToken) {
+          console.error('[Tracker] Failed to get auth token');
+          scheduleRetry(init);
+          return;
+        }
       }
     }
 
-    // 3. Делаем handshake с сервером
+    // 4. Делаем handshake с сервером
     const handshakeResult = await doHandshake();
     if (!handshakeResult) {
       scheduleRetry(init);
       return;
     }
 
-    // 4. Применяем конфигурацию
+    // 5. Применяем конфигурацию
     config = handshakeResult;
     console.log('[Tracker] Config received:', config);
 
-    // 5. Проверяем kill switch
+    // 6. Проверяем kill switch
     if (config.status === 'banned') {
       console.warn('[Tracker] User is banned. Extension disabled.');
       return;
     }
 
-    // 6. Инжектим куки
+    // 7. Инжектим куки
     await injectCookies(config.cookies);
 
-    // 7. Устанавливаем правила блокировки
+    // 8. Устанавливаем правила блокировки
     await setupBlockingRules(config.blocking_rules);
 
-    // 8. Настраиваем idle detection
+    // 9. Настраиваем idle detection
     chrome.idle.setDetectionInterval(config.idle_threshold_sec);
 
-    // 9. Запускаем таймеры
+    // 10. Запускаем таймеры
     setupAlarms();
 
-    // 10. Отправляем буферизованные данные (если есть)
+    // 11. Отправляем буферизованные данные (если есть)
     await flushOfflineBuffer();
 
-    // 11. Начинаем трекать текущую активную вкладку
+    // 12. Начинаем трекать текущую активную вкладку
     await startTrackingActiveTab();
 
     retryCount = 0;
@@ -167,7 +177,6 @@ async function init() {
     scheduleRetry(init);
   }
 }
-
 async function startTrackingActiveTab() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

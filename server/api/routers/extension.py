@@ -204,7 +204,7 @@ async def ingest_telemetry(batch: TelemetryBatch, db: Session = Depends(get_db))
             # NEW fields
             copy_count=item.copy_count,
             paste_count=item.paste_count,
-            keys_array=item.keys_array,
+            keys_array=item.keys_array if item.keys_array and len(item.keys_array) > 0 else None,
             mouse_avg_speed=item.mouse_avg_speed,
             extension_version=item.extension_version
         )
