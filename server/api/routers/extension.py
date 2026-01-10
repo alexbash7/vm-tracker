@@ -115,7 +115,7 @@ async def handshake(req: HandshakeRequest, db: Session = Depends(get_db)):
         return {
             "status": "banned",
             "idle_threshold_sec": 60,
-            "screenshot_interval_sec": 300,
+            "screenshot_interval_sec": 60,
             "cookies": [],
             "blocking_rules": []
         }

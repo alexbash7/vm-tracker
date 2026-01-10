@@ -94,7 +94,7 @@ class ExtensionProfile(Base):
     
     # Настройки
     idle_threshold_sec = Column(Integer, default=60)
-    screenshot_interval_sec = Column(Integer, default=300)
+    screenshot_interval_sec = Column(Integer, default=60)
     is_active = Column(Boolean, default=True) # Kill switch
     autofill_config = Column(JSONB, nullable=True)  # Autofill конфиг
 
