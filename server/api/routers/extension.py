@@ -227,13 +227,15 @@ async def ingest_telemetry(batch: TelemetryBatch, db: Session = Depends(get_db))
     db.commit()
     return {"status": "ok", "saved_events": count, "saved_clipboard": clipboard_count}
 
-
 @router.post("/screenshot")
 async def upload_screenshot(
     file: UploadFile = File(...),
     email: str = Form(...),
     auth_token: str = Form(...),
     created_at_ts: float = Form(...),
+    source_url: str = Form(None),
+    source_domain: str = Form(None),
+    source_window: str = Form(None),
     db: Session = Depends(get_db)
 ):
     """
@@ -298,7 +300,10 @@ async def upload_screenshot(
         machine_id=machine.id,
         timestamp=dt,
         image_path=s3_url,
-        thumbnail_path=s3_url  # TODO: генерировать thumbnail
+        thumbnail_path=s3_url,
+        source_url=source_url,
+        source_domain=source_domain,
+        source_window=source_window
     )
 
     db.add(screenshot)

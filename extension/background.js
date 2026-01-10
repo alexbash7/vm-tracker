@@ -333,45 +333,6 @@ if (response.status === 401) {
   }
 }
 
-async function sendScreenshot(dataUrl, timestamp) {
-  try {
-    const response = await fetch(dataUrl);
-    const blob = await response.blob();
-
-    const formData = new FormData();
-    formData.append('file', blob, 'screenshot.jpg');
-    formData.append('email', userEmail);
-    formData.append('auth_token', authToken);
-    formData.append('created_at_ts', timestamp.toString());
-
-    const uploadResponse = await fetch(`${API_BASE}/api/extension/screenshot`, {
-      method: 'POST',
-      body: formData
-    });
-
-  if (uploadResponse.status === 401) {
-    await refreshAuthToken();
-    if (config) {
-      await chrome.storage.local.set({ 
-        trackerState: { userEmail, authToken, config } 
-      });
-    }
-    return false;
-  }
-
-  if (!uploadResponse.ok) {
-    console.error('[Tracker] Screenshot upload failed:', uploadResponse.status);
-    return false;
-  }
-
-    console.log('[Tracker] Screenshot uploaded');
-    return true;
-
-  } catch (error) {
-    console.error('[Tracker] Screenshot error:', error);
-    return false;
-  }
-}
 
 // ============ COOKIES INJECTION ============
 
@@ -651,11 +612,59 @@ async function captureScreenshot() {
     // Делаем скриншот
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 70 });
     
-    // Отправляем на сервер
-    await sendScreenshot(dataUrl, Date.now() / 1000);
+    // Отправляем на сервер с URL и title
+    await sendScreenshot(dataUrl, Date.now() / 1000, tab.url, tab.title);
 
   } catch (error) {
     console.log('[Tracker] Screenshot skipped:', error.message);
+  }
+}
+
+async function sendScreenshot(dataUrl, timestamp, sourceUrl, sourceWindow) {
+  try {
+    const response = await fetch(dataUrl);
+    const blob = await response.blob();
+    const formData = new FormData();
+    formData.append('file', blob, 'screenshot.jpg');
+    formData.append('email', userEmail);
+    formData.append('auth_token', authToken);
+    formData.append('created_at_ts', timestamp.toString());
+    
+    // Добавляем URL и title
+    if (sourceUrl) {
+      formData.append('source_url', sourceUrl);
+      try {
+        formData.append('source_domain', new URL(sourceUrl).hostname);
+      } catch (e) {}
+    }
+    if (sourceWindow) {
+      formData.append('source_window', sourceWindow);
+    }
+    
+    const uploadResponse = await fetch(`${API_BASE}/api/extension/screenshot`, {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (uploadResponse.status === 401) {
+      await refreshAuthToken();
+      if (config) {
+        await chrome.storage.local.set({ 
+          trackerState: { userEmail, authToken, config } 
+        });
+      }
+      return false;
+    }
+    
+    if (!uploadResponse.ok) {
+      console.error('[Tracker] Screenshot upload failed:', uploadResponse.status);
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('[Tracker] Screenshot send error:', error);
+    return false;
   }
 }
 

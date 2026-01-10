@@ -53,6 +53,10 @@ class ActivityEvent(Base):
     mouse_avg_speed = Column(Float, nullable=True)
     extension_version = Column(String(20), nullable=True)
     
+    # AI tagging
+    task_id = Column(UUID(as_uuid=True), nullable=True)
+    ai_processed_at = Column(DateTime(timezone=True), nullable=True)
+    
     # Системные ресурсы
     cpu_percent = Column(Float)
     ram_used_percent = Column(Float)
@@ -75,9 +79,19 @@ class Screenshot(Base):
     image_path = Column(String(500))
     thumbnail_path = Column(String(500))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Source info (from extension)
+    source_url = Column(Text, nullable=True)
+    source_domain = Column(String(255), nullable=True)
+    source_window = Column(String(500), nullable=True)
+    
+    # AI tagging
+    task_id = Column(UUID(as_uuid=True), nullable=True)
+    ai_confidence = Column(Float, nullable=True)
+    ai_analysis = Column(JSONB, nullable=True)
+    ai_processed_at = Column(DateTime(timezone=True), nullable=True)
 
     machine = relationship("Machine", back_populates="screenshots")
-
 
 # Добавляем в models.py
 
