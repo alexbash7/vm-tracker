@@ -41,6 +41,7 @@ async def receive_events(batch: EventsBatch, db: Session = Depends(get_db)):
         machines_updated.add(machine.id)
         
         # Создать событие
+# Создать событие
         event = ActivityEvent(
             machine_id=machine.id,
             timestamp=event_data.timestamp,
@@ -57,7 +58,14 @@ async def receive_events(batch: EventsBatch, db: Session = Depends(get_db)):
             cpu_percent=event_data.cpu_percent,
             ram_used_percent=event_data.ram_used_percent,
             disk_used_percent=event_data.disk_used_percent,
-            agent_type=event_data.agent_type
+            agent_type=event_data.agent_type,
+            # NEW fields
+            duration_seconds=event_data.duration_seconds,
+            focus_time_sec=event_data.focus_time_sec,
+            copy_count=event_data.copy_count,
+            paste_count=event_data.paste_count,
+            keys_array=event_data.keys_array,
+            mouse_avg_speed=event_data.mouse_avg_speed,
         )
         db.add(event)
         processed += 1

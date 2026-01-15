@@ -3,6 +3,7 @@ from typing import Optional, List, Any
 from datetime import datetime
 from uuid import UUID
 
+
 class ActivityEventCreate(BaseModel):
     machine_id: str
     timestamp: datetime
@@ -19,8 +20,15 @@ class ActivityEventCreate(BaseModel):
     # Browser extension specific
     active_url: Optional[str] = None
     active_domain: Optional[str] = None
-    focus_time_sec: Optional[int] = None
     tab_switches_count: Optional[int] = 0
+    
+    # NEW: Desktop tracker v2 fields
+    duration_seconds: Optional[int] = 0
+    focus_time_sec: Optional[int] = 0
+    copy_count: Optional[int] = 0
+    paste_count: Optional[int] = 0
+    keys_array: Optional[List[str]] = None
+    mouse_avg_speed: Optional[float] = None
     
     # Системные ресурсы
     cpu_percent: Optional[float] = None
