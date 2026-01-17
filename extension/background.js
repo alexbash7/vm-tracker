@@ -62,6 +62,29 @@ let currentTabId = null;
 // Очередь завершённых сессий для отправки
 let closedSessions = [];
 
+// ============ SITE FILTERS ============
+let siteFilters = null;
+
+// ============ MANAGED STORAGE (для VM) ============
+
+async function getManagedCredentials() {
+  try {
+    const managed = await chrome.storage.managed.get(['userEmail', 'authToken']);
+    if (managed.userEmail) {
+      console.log('[Tracker] Found managed credentials:', managed.userEmail);
+      return {
+        email: managed.userEmail,
+        token: managed.authToken || 'manual-tracker-key-2026'
+      };
+    }
+  } catch (e) {
+    // managed storage не доступен или пуст — это нормально
+    console.log('[Tracker] No managed storage available');
+  }
+  return null;
+}
+
+
 // ============ INITIALIZATION ============
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -76,20 +99,39 @@ chrome.runtime.onStartup.addListener(() => {
 
 async function init() {
   try {
-    // 0. Сначала пробуем получить email из User-Agent (для AdsPower)
-    const uaEmail = await getEmailFromUserAgent();
-    
-    if (uaEmail) {
-      userEmail = uaEmail;
-      authToken = 'manual-tracker-key-2026';
+
+        await loadSiteFilters();
+    // 0. Сначала проверяем managed storage (для VM — наивысший приоритет)
+    const managedCreds = await getManagedCredentials();
+    if (managedCreds) {
+      userEmail = managedCreds.email;
+      authToken = managedCreds.token;
       await chrome.storage.local.set({ 
-        manualUserEmail: uaEmail, 
+        manualUserEmail: userEmail, 
         manualAuthToken: authToken,
-        accountType: 'manual'
+        accountType: 'managed'
       });
-      console.log('[Tracker] User from UA mapping:', userEmail);
-    } else {
-      // 1. Сначала проверяем manual storage (для AdsPower без UA)
+      console.log('[Tracker] User from managed policy:', userEmail);
+    }
+    
+    // 1. Если не из managed — пробуем User-Agent (для AdsPower)
+    if (!userEmail) {
+      const uaEmail = await getEmailFromUserAgent();
+      
+      if (uaEmail) {
+        userEmail = uaEmail;
+        authToken = 'manual-tracker-key-2026';
+        await chrome.storage.local.set({ 
+          manualUserEmail: uaEmail, 
+          manualAuthToken: authToken,
+          accountType: 'manual'
+        });
+        console.log('[Tracker] User from UA mapping:', userEmail);
+      }
+    }
+    
+    // 2. Если всё ещё нет — проверяем manual storage
+    if (!userEmail) {
       const { manualUserEmail, manualAuthToken } = await chrome.storage.local.get(['manualUserEmail', 'manualAuthToken']);
       
       if (manualUserEmail && manualAuthToken) {
@@ -97,27 +139,29 @@ async function init() {
         authToken = manualAuthToken;
         await chrome.storage.local.set({ accountType: 'manual' });
         console.log('[Tracker] User:', userEmail, '(Manual)');
-      } else {
-        // 2. Пробуем Chrome identity
-        const userInfo = await chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' });
-        
-        if (!userInfo.email) {
-          console.error('[Tracker] No user email found. Is user signed into Chrome or manualUserEmail set?');
-          scheduleRetry(init);
-          return;
-        }
-        
-        userEmail = userInfo.email;
-        await chrome.storage.local.set({ accountType: 'chrome' });
-        console.log('[Tracker] User:', userEmail, '(Chrome)');
-        
-        // 3. Получаем OAuth токен
-        authToken = await getAuthToken();
-        if (!authToken) {
-          console.error('[Tracker] Failed to get auth token');
-          scheduleRetry(init);
-          return;
-        }
+      }
+    }
+    
+    // 3. Если всё ещё нет — пробуем Chrome identity
+    if (!userEmail) {
+      const userInfo = await chrome.identity.getProfileUserInfo({ accountStatus: 'ANY' });
+      
+      if (!userInfo.email) {
+        console.error('[Tracker] No user email found. Is user signed into Chrome or manualUserEmail set?');
+        scheduleRetry(init);
+        return;
+      }
+      
+      userEmail = userInfo.email;
+      await chrome.storage.local.set({ accountType: 'chrome' });
+      console.log('[Tracker] User:', userEmail, '(Chrome)');
+      
+      // Получаем OAuth токен
+      authToken = await getAuthToken();
+      if (!authToken) {
+        console.error('[Tracker] Failed to get auth token');
+        scheduleRetry(init);
+        return;
       }
     }
 
@@ -177,6 +221,9 @@ async function init() {
     scheduleRetry(init);
   }
 }
+
+
+
 async function startTrackingActiveTab() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -189,9 +236,15 @@ async function startTrackingActiveTab() {
 }
 
 // ============ AUTH ============
-
 async function getAuthToken() {
-  // Сначала пробуем manual token (для AdsPower)
+  // Сначала проверяем managed storage (для VM)
+  const managedCreds = await getManagedCredentials();
+  if (managedCreds && managedCreds.token) {
+    console.log('[Tracker] Using managed auth token');
+    return managedCreds.token;
+  }
+  
+  // Затем пробуем manual token (для AdsPower)
   const { manualAuthToken } = await chrome.storage.local.get('manualAuthToken');
   if (manualAuthToken) {
     console.log('[Tracker] Using manual auth token');
@@ -213,8 +266,16 @@ async function getAuthToken() {
   });
 }
 
+
+
 async function refreshAuthToken() {
-  // Для manual токена просто возвращаем его же
+  // Для managed/manual токена просто возвращаем его же
+  const managedCreds = await getManagedCredentials();
+  if (managedCreds && managedCreds.token) {
+    authToken = managedCreds.token;
+    return authToken;
+  }
+  
   const { manualAuthToken } = await chrome.storage.local.get('manualAuthToken');
   if (manualAuthToken) {
     authToken = manualAuthToken;
@@ -229,6 +290,9 @@ async function refreshAuthToken() {
     });
   });
 }
+
+
+
 
 async function getEmailFromUserAgent() {
   const ua = navigator.userAgent;
@@ -842,6 +906,21 @@ chrome.idle.onStateChanged.addListener(async (state) => {
 // ============ MESSAGES FROM CONTENT SCRIPT ============
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Диагностические сообщения (от diagnostic.html)
+  
+    if (message.type === 'GET_SITE_FILTER') {
+    (async () => {
+      try {
+        const filter = await getFilterForDomain(message.domain);
+        sendResponse({ filter });
+      } catch (e) {
+        console.error('[Tracker] Filter request error:', e);
+        sendResponse({ filter: null });
+      }
+    })();
+    return true;
+  }
+  
+  
   if (message.type === 'DIAGNOSTIC_INFO') {
     (async () => {
       const storage = await chrome.storage.local.get(['trackerState', 'upworkFilter', 'autofillConfig', 'offlineBuffer', 'debugLog']);
@@ -1052,6 +1131,8 @@ async function refreshConfig() {
     console.log('[Tracker] Config refreshed successfully');
     await loadUpworkFilter();
 
+    await loadSiteFilters();
+
     // Обновляем Upwork фильтр
     
     
@@ -1086,4 +1167,46 @@ async function loadUpworkFilter() {
   } catch (e) {
     console.error('[Tracker] Failed to load upwork filter:', e);
   }
+}
+
+
+// ============ SITE FILTERS MANAGEMENT ============
+
+async function loadSiteFilters() {
+  try {
+    const response = await fetch('https://dropshare.s3.eu-central-1.wasabisys.com/site-filters.json?t=' + Date.now(), {
+      cache: 'no-store'
+    });
+    siteFilters = await response.json();
+    await chrome.storage.local.set({ siteFilters });
+    console.log('[Tracker] Site filters loaded:', Object.keys(siteFilters.filters || {}).length, 'domains');
+  } catch (e) {
+    console.error('[Tracker] Failed to load site filters:', e);
+  }
+}
+
+async function getFilterForDomain(domain) {
+  // Восстанавливаем из storage если потерялся
+  if (!siteFilters) {
+    const { siteFilters: cached } = await chrome.storage.local.get('siteFilters');
+    if (cached) {
+      siteFilters = cached;
+    } else {
+      await loadSiteFilters();
+    }
+  }
+  
+  if (!siteFilters || !siteFilters.filters) {
+    return null;
+  }
+  
+  // Ищем по домену
+  for (const [filterDomain, filterData] of Object.entries(siteFilters.filters)) {
+    if (domain.includes(filterDomain) && filterData.enabled) {
+      console.log('[Tracker] Filter found for:', domain, '→', filterDomain);
+      return filterData;
+    }
+  }
+  
+  return null;
 }

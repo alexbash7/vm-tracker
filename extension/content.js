@@ -40,16 +40,131 @@ function isExtensionValid() {
 }
 
 // Load account type from storage
+// Load account type AND site filter
 (async function loadAccountType() {
   try {
     const result = await chrome.storage.local.get('accountType');
     if (result.accountType) {
       accountType = result.accountType;
     }
+    
+    // Load site filter
+    await loadSiteFilter();
+    
   } catch (e) {
-    // Ignore, use default
+    console.error('[Content] Init error:', e);
   }
 })();
+
+
+// ============ UNIVERSAL SITE FILTER ============
+let currentSiteFilter = null;
+
+
+async function loadSiteFilter() {
+  try {
+    const domain = window.location.hostname;
+    const response = await chrome.runtime.sendMessage({
+      type: 'GET_SITE_FILTER',
+      domain: domain
+    });
+    
+    if (response && response.filter) {
+      currentSiteFilter = response.filter;
+      console.log('[Filter] Loaded for', domain, currentSiteFilter);
+      
+      // Ждём загрузки DOM
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+          applySiteFilter();
+        });
+      } else {
+        // DOM уже загружен
+        applySiteFilter();
+      }
+      
+    } else {
+      console.log('[Filter] No filter for', domain);
+    }
+  } catch (e) {
+    console.error('[Filter] Load error:', e);
+  }
+}
+
+
+async function applySiteFilter() {
+  if (!currentSiteFilter || (!currentSiteFilter.hide_selectors && !currentSiteFilter.hide_by_text)) return;
+  
+  // Кликаем кнопку если нужно
+  if (currentSiteFilter.click_before_hide) {
+    const button = document.querySelector(currentSiteFilter.click_before_hide);
+    if (button) {
+      button.click();
+      console.log('[Filter] Clicked button:', currentSiteFilter.click_before_hide);
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
+  
+  // Функция скрытия элементов
+  const hideElements = () => {
+    let hiddenCount = 0;
+    
+    // 1. Скрываем по селекторам
+    if (currentSiteFilter.hide_selectors) {
+      currentSiteFilter.hide_selectors.forEach(selector => {
+        try {
+          document.querySelectorAll(selector).forEach(el => {
+            if (el.style.display !== 'none') {
+              el.style.display = 'none';
+              hiddenCount++;
+            }
+          });
+        } catch (e) {
+          console.error('[Filter] Invalid selector:', selector, e.message);
+        }
+      });
+    }
+    
+    // 2. Скрываем по тексту внутри элементов
+    if (currentSiteFilter.hide_by_text) {
+      Object.entries(currentSiteFilter.hide_by_text).forEach(([selector, texts]) => {
+        try {
+          const elements = document.querySelectorAll(selector);
+          elements.forEach(el => {
+            const text = el.textContent.trim();
+            const shouldHide = texts.some(t => text.includes(t));
+            if (shouldHide && el.style.display !== 'none') {
+              el.style.display = 'none';
+              hiddenCount++;
+            }
+          });
+        } catch (e) {
+          console.error('[Filter] Invalid text selector:', selector, e.message);
+        }
+      });
+    }
+    
+    if (hiddenCount > 0) {
+      console.log('[Filter] Hidden', hiddenCount, 'elements');
+    }
+  };
+  
+  // Скрываем сразу
+  hideElements();
+  
+  // Следим за изменениями DOM
+  const observer = new MutationObserver(hideElements);
+  observer.observe(document.body, { 
+    childList: true, 
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['style']
+  });
+  
+  console.log('[Filter] Observer started');
+}
+
+
 
 // ============ PROFILE SETUP ============
 (function() {
