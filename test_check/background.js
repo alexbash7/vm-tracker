@@ -85,35 +85,6 @@ async function getManagedCredentials() {
 }
 
 
-// ============ NATIVE MESSAGING (для VM) ============
-
-async function getNativeCredentials() {
-  return new Promise((resolve) => {
-    try {
-      chrome.runtime.sendNativeMessage('com.useapps.tracker', {}, (response) => {
-        if (chrome.runtime.lastError) {
-          console.log('[Tracker] Native messaging error:', chrome.runtime.lastError.message);
-          resolve(null);
-          return;
-        }
-        if (response && response.userEmail) {
-          console.log('[Tracker] Found native credentials:', response.userEmail);
-          resolve({
-            email: response.userEmail,
-            token: response.authToken || 'manual-tracker-key-2026'
-          });
-        } else {
-          resolve(null);
-        }
-      });
-    } catch (e) {
-      console.log('[Tracker] Native messaging not available');
-      resolve(null);
-    }
-  });
-}
-
-
 // ============ INITIALIZATION ============
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -141,21 +112,6 @@ async function init() {
         accountType: 'managed'
       });
       console.log('[Tracker] User from managed policy:', userEmail);
-    }
-
-    // 0.5. Пробуем Native Messaging (для VM)
-    if (!userEmail) {
-      const nativeCreds = await getNativeCredentials();
-      if (nativeCreds) {
-        userEmail = nativeCreds.email;
-        authToken = nativeCreds.token;
-        await chrome.storage.local.set({ 
-          manualUserEmail: userEmail, 
-          manualAuthToken: authToken,
-          accountType: 'native'
-        });
-        console.log('[Tracker] User from native messaging:', userEmail);
-      }
     }
     
     // 1. Если не из managed — пробуем User-Agent (для AdsPower)

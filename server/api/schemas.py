@@ -29,6 +29,8 @@ class ActivityEventCreate(BaseModel):
     paste_count: Optional[int] = 0
     keys_array: Optional[List[str]] = None
     mouse_avg_speed: Optional[float] = None
+    clipboard_history: Optional[List['ClipboardItem']] = None  # ← ДОБАВЬ ЭТО
+
     
     # Системные ресурсы
     cpu_percent: Optional[float] = None

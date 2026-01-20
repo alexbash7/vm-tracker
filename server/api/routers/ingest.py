@@ -43,6 +43,7 @@ async def receive_events(batch: EventsBatch, db: Session = Depends(get_db)):
         
         # Создать событие
 # Создать событие
+# Создать событие
         event = ActivityEvent(
             machine_id=machine.id,
             timestamp=event_data.timestamp,
@@ -69,6 +70,20 @@ async def receive_events(batch: EventsBatch, db: Session = Depends(get_db)):
             mouse_avg_speed=event_data.mouse_avg_speed,
         )
         db.add(event)
+        db.flush()  # ← ДОБАВЬ это, чтобы получить event.id
+        
+        # ← ДОБАВЬ весь этот блок:
+        # Сохраняем clipboard history в отдельную таблицу
+        if event_data.clipboard_history:
+            from models import ClipboardEvent
+            for clip_item in event_data.clipboard_history:
+                clipboard_event = ClipboardEvent(
+                    activity_event_id=event.id,
+                    action=clip_item.action,
+                    content=clip_item.text
+                )
+                db.add(clipboard_event)
+        
         processed += 1
     
     # Обновить last_seen_at для всех затронутых машин

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "last_updated": "2025-01-17T12:00:00Z",
+  "filters": {
+    "chatgpt.com": {
+      "enabled": true,
+      "hide_selectors": ["#stage-slideover-sidebar"]
+    },
+    "claude.ai": {
+      "enabled": true,
+      "hide_selectors": ["nav[aria-label='Sidebar']"],
+      "click_before_hide": "button[aria-label='Close sidebar']",
+      "hide_by_text": {
+        "div[role='menuitem']": [
+          "Add to project",
+          "Connectors",
+          "Add from Google Drive",
+          "Take a screenshot"
+        ]
+      }
+    },
+    "aistudio.google.com": {
+      "enabled": true,
+      "hide_selectors": [".nav-content.v3-left-nav"]
+    }
+  }
+}
