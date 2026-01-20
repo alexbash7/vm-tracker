@@ -3,6 +3,9 @@ from typing import Optional, List, Any
 from datetime import datetime
 from uuid import UUID
 
+class ClipboardItem(BaseModel):
+    action: str  # 'copy' or 'paste'
+    text: str
 
 class ActivityEventCreate(BaseModel):
     machine_id: str
@@ -106,9 +109,6 @@ class AgentConfigResponse(BaseModel):
     autofill_config: Optional[dict] = None
 
 # 2. Телеметрия (Логи)
-class ClipboardItem(BaseModel):
-    action: str  # 'copy' or 'paste'
-    text: str
 
 class ExtensionSessionEvent(BaseModel):
     url: str
