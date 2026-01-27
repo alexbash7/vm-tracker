@@ -8,9 +8,9 @@ RUN apt-get update && apt-get install -y \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY hash-worker/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY worker.py .
+COPY hash-worker/worker.py .
 
 CMD ["python", "-u", "worker.py"]
