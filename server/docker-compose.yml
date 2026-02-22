@@ -1,25 +1,20 @@
-version: '3.8'
-
 services:
   api:
-    build: ./api
-    ports:
-      - "8100:8000"
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     environment:
-      - DATABASE_URL=postgresql://tracker:tracker_pass@db:5432/activity_tracker
-    depends_on:
-      - db
+      - DATABASE_URL=postgresql://vm_tracker:fd209350b65cc9ce@152.53.244.112:5432/vm_tracker
+      - VIRTUAL_HOST=vmtracker.useapps.org
+      - LETSENCRYPT_HOST=vmtracker.useapps.org
+      - AWS_ACCESS_KEY=ID2SD50ZJSM66SX9V8YE
+      - AWS_SECRET_ACCESS_KEY=u4vH1Xv5FeIl0D9uSmNsmzzlgOROz8I3TGboDwAy
+      - S3_ENDPOINT=https://s3.eu-central-2.wasabisys.com
+      - S3_BUCKET=vmtracker
     restart: unless-stopped
+    networks:
+      - proxy
 
-  db:
-    image: postgres:15-alpine
-    environment:
-      - POSTGRES_USER=tracker
-      - POSTGRES_PASSWORD=tracker_pass
-      - POSTGRES_DB=activity_tracker
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
-
-volumes:
-  postgres_data:
+networks:
+  proxy:
+    external: true
